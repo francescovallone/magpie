@@ -1,0 +1,29 @@
+{
+  "name": "magpie",
+  "version": "0.1.0",
+  "description": "Acceptance criteria scenarios on top of Vitest.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "test": "vitest run",
+    "test:acceptance": "vitest run acceptance/**/*.test.ts",
+    "test:unit": "vitest run tests/**/*.test.ts",
+    "test:watch": "vitest",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "acceptance-testing",
+    "vitest",
+    "testing",
+    "traceability"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
