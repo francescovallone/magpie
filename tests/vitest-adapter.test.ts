@@ -43,6 +43,60 @@ describe("Vitest adapter", () => {
     await tests[0]?.();
   });
 
+  it("passes hook options through the adapter into scenario execution", async () => {
+    const events: Array<string> = [];
+    const tests: Array<() => Promise<void> | void> = [];
+    const subject = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "auth-hooks",
+      title: "Adapter forwards hooks",
+      steps: [
+        {
+          id: "given-step",
+          name: "given step",
+          type: "given",
+          execute: () => {
+            events.push("execute");
+          },
+        },
+      ],
+    });
+
+    registerScenario(subject, {
+      api: {
+        describe(_name, run) {
+          run();
+        },
+        it(_name, run) {
+          tests.push(run);
+        },
+      },
+      hooks: {
+        beforeScenario: () => {
+          events.push("beforeScenario");
+        },
+        beforeStep: () => {
+          events.push("beforeStep");
+        },
+        afterStep: () => {
+          events.push("afterStep");
+        },
+        afterScenario: () => {
+          events.push("afterScenario");
+        },
+      },
+    });
+
+    await tests[0]?.();
+
+    expect(events).toEqual([
+      "beforeScenario",
+      "beforeStep",
+      "execute",
+      "afterStep",
+      "afterScenario",
+    ]);
+  });
+
   it("throws the engine failure back into Vitest", async () => {
     const tests: Array<() => Promise<void> | void> = [];
     const subject = defineAcceptanceScenario({

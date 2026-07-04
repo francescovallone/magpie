@@ -137,6 +137,88 @@ const filter = resolveScenarioFilter({
 registerFilteredStory(story, { filter });
 ```
 
+## Gherkin and Cucumber
+
+You can generate Magpie scenarios directly from Gherkin feature text and resolve steps with Cucumber expressions.
+
+```ts
+import {
+  createGherkinStory,
+  defineGherkinStep,
+  registerFilteredStory,
+} from "magpie";
+
+const story = createGherkinStory(
+  `
+Feature: Authentication
+
+  @auth @AUTH-001
+  Scenario: Registered user logs in
+    Given a registered user "alice"
+    When the user logs in with password secret
+    Then the response status is 200
+`,
+  {
+    uri: "authentication.feature",
+    stepDefinitions: [
+      defineGherkinStep({
+        expression: "a registered user {string}",
+        execute: ({ arguments: [username], context }) => {
+          context.user = username;
+        },
+      }),
+      defineGherkinStep({
+        expression: "the user logs in with password {word}",
+        execute: ({ arguments: [password], context }) => {
+          context.response = { status: password === "secret" ? 200 : 401 };
+        },
+      }),
+      defineGherkinStep({
+        expression: "the response status is {int}",
+        execute: ({ arguments: [status], context }) => {
+          if (context.response?.status !== status) {
+            throw new Error("Unexpected response status");
+          }
+        },
+      }),
+    ],
+  },
+);
+
+registerFilteredStory(story, {
+  reportToVitest: true,
+});
+```
+
+The importer expands scenario outlines, includes background steps, preserves Gherkin doc strings and data tables in step metadata, and extracts acceptance references from tags by prefix. The default prefix is `AUTH-`, and you can override it with `acceptanceTagPrefix`.
+
+You can also load `.feature` files directly from disk:
+
+```ts
+import { createGherkinStoryFromFile, defineGherkinStep } from "magpie";
+
+const story = await createGherkinStoryFromFile("./features/authentication.feature", {
+  stepDefinitions: [
+    defineGherkinStep({
+      expression: "a registered user {string}",
+      execute: () => undefined,
+    }),
+  ],
+});
+```
+
+Acceptance references can also be extracted with tag and metadata patterns:
+
+```ts
+const story = await createGherkinStoryFromFile("./features/payments.feature", {
+  acceptanceTagPattern: /acceptance\(([^)]+)\)/,
+  acceptanceMetadataPattern: /PAY-\d+/g,
+  stepDefinitions,
+});
+```
+
+That supports conventions like `@acceptance(PAY-123)` and description lines such as `Acceptance: PAY-123` on the feature, rule, or scenario.
+
 Supported CLI flags:
 
 - `--tag auth`
@@ -160,6 +242,7 @@ This package now configures Vitest to use the Magpie custom reporter as the prim
 
 - `npm test` prints the Magpie acceptance report at the end of the run
 - a JSON artifact is written automatically to `.magpie/reports/latest.json`
+- every run is also archived under `.magpie/reports/history/`
 - acceptance-style suites can opt in by using `reportToVitest: true`
 
 Example:
@@ -189,6 +272,18 @@ Run specific suites with:
 
 - `npm run test:unit`
 - `npm run test:acceptance`
+
+`test:unit` and `test:acceptance` now target separate named Vitest projects.
+
+## CI artifacts
+
+The repository includes a GitHub Actions workflow that:
+
+- installs dependencies
+- runs typecheck, unit tests, acceptance tests, and the full test run
+- uploads `.magpie/reports/` as a build artifact
+
+The latest report is always available at `.magpie/reports/latest.json`, while historical JSON reports are archived in `.magpie/reports/history/`.
 
 ## Reporting
 
@@ -262,6 +357,55 @@ await jsonReporter.flush();
 ```
 
 The Vitest adapter can also record scenario results by passing `reporter` into `registerScenario()`, `registerStory()`, or `registerFilteredStory()`.
+
+## Hooks
+
+The execution engine supports:
+
+- `beforeScenario`
+- `afterScenario`
+- `beforeStep`
+- `afterStep`
+
+Use hooks directly with `executeScenario()`:
+
+```ts
+import { executeScenario } from "magpie";
+
+await executeScenario(loginScenario, {
+  hooks: {
+    beforeScenario: (_scenario, context) => {
+      context.started = true;
+    },
+    beforeStep: (step) => {
+      console.log(`starting ${step.name}`);
+    },
+    afterStep: (step, _context, result) => {
+      console.log(`${step.name}: ${result.status}`);
+    },
+    afterScenario: (_scenario, _context, result) => {
+      console.log(result.success ? "scenario passed" : "scenario failed");
+    },
+  },
+});
+```
+
+If you need to combine multiple hook sets, use `mergeExecutionHooks()`.
+
+```ts
+import { createReportingHooks, executeScenario, mergeExecutionHooks } from "magpie";
+
+const hooks = mergeExecutionHooks(
+  createReportingHooks(reporter),
+  {
+    beforeScenario: () => {
+      console.log("scenario starting");
+    },
+  },
+);
+
+await executeScenario(loginScenario, { hooks });
+```
 
 ## Project scripts
 

@@ -7,6 +7,7 @@ import {
   defineStory,
   executeScenario,
   formatStoryReport,
+  mergeExecutionHooks,
   scenario,
 } from "../src/index.js";
 
@@ -97,6 +98,66 @@ describe("executeScenario", () => {
       "cleanup",
       "after:teardown:passed",
       "afterScenario",
+    ]);
+  });
+
+  it("merges multiple hook sets in order", async () => {
+    const calls: Array<string> = [];
+    const subject = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "auth-hooks",
+      title: "Hooks run in order",
+      steps: [
+        {
+          id: "given-step",
+          name: "given step",
+          type: "given",
+          execute: () => undefined,
+        },
+      ],
+    });
+
+    await executeScenario(subject, {
+      hooks: mergeExecutionHooks(
+        {
+          beforeScenario: () => {
+            calls.push("beforeScenario:first");
+          },
+          beforeStep: () => {
+            calls.push("beforeStep:first");
+          },
+          afterStep: () => {
+            calls.push("afterStep:first");
+          },
+          afterScenario: () => {
+            calls.push("afterScenario:first");
+          },
+        },
+        {
+          beforeScenario: () => {
+            calls.push("beforeScenario:second");
+          },
+          beforeStep: () => {
+            calls.push("beforeStep:second");
+          },
+          afterStep: () => {
+            calls.push("afterStep:second");
+          },
+          afterScenario: () => {
+            calls.push("afterScenario:second");
+          },
+        },
+      ),
+    });
+
+    expect(calls).toEqual([
+      "beforeScenario:first",
+      "beforeScenario:second",
+      "beforeStep:first",
+      "beforeStep:second",
+      "afterStep:first",
+      "afterStep:second",
+      "afterScenario:first",
+      "afterScenario:second",
     ]);
   });
 });

@@ -8,8 +8,8 @@
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
     "test": "vitest run",
-    "test:acceptance": "vitest run acceptance/**/*.test.ts",
-    "test:unit": "vitest run tests/**/*.test.ts",
+    "test:acceptance": "vitest run --project acceptance",
+    "test:unit": "vitest run --project unit",
     "test:watch": "vitest",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
@@ -25,5 +25,10 @@
     "@types/node": "^26.1.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "@cucumber/cucumber-expressions": "^20.0.0",
+    "@cucumber/gherkin": "^41.0.0",
+    "@cucumber/messages": "^33.0.4"
   }
 }

@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
 
 import { writeJsonReport } from "./io.js";
@@ -12,8 +14,13 @@ export interface MagpieVitestReporterOptions
   extends ReportBuildOptions<Record<string, unknown>>,
     VitestReporterBridgeOptions {
   readonly jsonOutputFile?: string;
+  readonly jsonArchiveDirectory?: string;
   readonly spacing?: number;
   readonly write?: (text: string) => Promise<void> | void;
+}
+
+function createTimestampedReportFileName(timestamp: number): string {
+  return new Date(timestamp).toISOString().replace(/[:.]/g, "-") + ".json";
 }
 
 export class MagpieVitestReporter implements Reporter {
@@ -29,18 +36,24 @@ export class MagpieVitestReporter implements Reporter {
     _reason: TestRunEndReason,
   ): Promise<void> {
     const report = await buildVitestReporterExecutionReport(this.options);
+    const write = this.options.write ?? ((text: string) => process.stdout.write(`\n${text}\n`));
 
     if (report.totals.scenarioCount === 0) {
+      await write("\nMagpie Report\n  No acceptance scenarios were recorded in this run.\n");
       return;
     }
 
     const output = formatExecutionRunReport(report);
-    const write = this.options.write ?? ((text: string) => process.stdout.write(`\n${text}\n`));
 
     await write(output);
 
     if (this.options.jsonOutputFile) {
       await writeJsonReport(this.options.jsonOutputFile, report, {
+        ...(this.options.spacing !== undefined ? { spacing: this.options.spacing } : {}),
+      });
+
+      const archiveDirectory = this.options.jsonArchiveDirectory ?? join(dirname(this.options.jsonOutputFile), "history");
+      await writeJsonReport(join(archiveDirectory, createTimestampedReportFileName(report.generatedAt)), report, {
         ...(this.options.spacing !== undefined ? { spacing: this.options.spacing } : {}),
       });
     }

@@ -43,10 +43,12 @@ describe("MagpieVitestReporter", () => {
   it("prints and optionally writes JSON output on test-run end", async () => {
     const recordsDirectory = join(tmpdir(), `magpie-vitest-${Date.now()}-report`);
     const jsonOutputFile = join(tmpdir(), `magpie-vitest-${Date.now()}-report.json`);
+    const jsonArchiveDirectory = join(tmpdir(), `magpie-vitest-${Date.now()}-history`);
     const write = vi.fn<(text: string) => void>();
     const reporter = createMagpieVitestReporter({
       recordsDirectory,
       jsonOutputFile,
+      jsonArchiveDirectory,
       write,
     });
     const scenario = defineAcceptanceScenario<Record<string, unknown>>({
@@ -63,9 +65,29 @@ describe("MagpieVitestReporter", () => {
     await reporter.onTestRunEnd?.([], [], "passed");
 
     const json = JSON.parse(await readFile(jsonOutputFile, "utf8"));
+    const archivedFiles = await readFile(
+      join(jsonArchiveDirectory, `${new Date(json.generatedAt).toISOString().replace(/[:.]/g, "-")}.json`),
+      "utf8",
+    );
 
     expect(write).toHaveBeenCalledTimes(1);
     expect(write.mock.calls[0]?.[0]).toContain("Execution Report");
     expect(json.totals.scenarioCount).toBe(1);
+    expect(JSON.parse(archivedFiles).totals.scenarioCount).toBe(1);
+  });
+
+  it("prints a minimal message when no Magpie scenarios were recorded", async () => {
+    const write = vi.fn<(text: string) => void>();
+    const recordsDirectory = join(tmpdir(), `magpie-vitest-${Date.now()}-empty`);
+    const reporter = createMagpieVitestReporter({
+      recordsDirectory,
+      write,
+    });
+
+    await reporter.onTestRunStart?.();
+    await reporter.onTestRunEnd?.([], [], "passed");
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write.mock.calls[0]?.[0]).toContain("No acceptance scenarios were recorded");
   });
 });

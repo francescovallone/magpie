@@ -72,6 +72,78 @@ export interface ExecuteScenarioOptions<TContext extends object> {
   readonly now?: () => number;
 }
 
+export function mergeExecutionHooks<TContext extends object>(
+  ...hookSets: ReadonlyArray<ExecutionHooks<TContext> | undefined>
+): ExecutionHooks<TContext> {
+  const definedHookSets = hookSets.filter(
+    (hookSet): hookSet is ExecutionHooks<TContext> => hookSet !== undefined,
+  );
+
+  if (definedHookSets.length === 0) {
+    return {};
+  }
+
+  const merged: ExecutionHooks<TContext> = {};
+
+  const beforeScenarioHooks = definedHookSets
+    .map((hookSet) => hookSet.beforeScenario)
+    .filter((hook): hook is NonNullable<ExecutionHooks<TContext>["beforeScenario"]> => hook !== undefined);
+  if (beforeScenarioHooks.length) {
+    Object.assign(merged, {
+      async beforeScenario(scenario: Scenario<TContext>, context: TContext) {
+        for (const hook of beforeScenarioHooks) {
+          await hook(scenario, context);
+        }
+      },
+    });
+  }
+
+  const afterScenarioHooks = definedHookSets
+    .map((hookSet) => hookSet.afterScenario)
+    .filter((hook): hook is NonNullable<ExecutionHooks<TContext>["afterScenario"]> => hook !== undefined);
+  if (afterScenarioHooks.length) {
+    Object.assign(merged, {
+      async afterScenario(
+        scenario: Scenario<TContext>,
+        context: TContext,
+        result: ScenarioExecutionResult<TContext>,
+      ) {
+        for (const hook of afterScenarioHooks) {
+          await hook(scenario, context, result);
+        }
+      },
+    });
+  }
+
+  const beforeStepHooks = definedHookSets
+    .map((hookSet) => hookSet.beforeStep)
+    .filter((hook): hook is NonNullable<ExecutionHooks<TContext>["beforeStep"]> => hook !== undefined);
+  if (beforeStepHooks.length) {
+    Object.assign(merged, {
+      async beforeStep(step: ScenarioStep<TContext>, context: TContext) {
+        for (const hook of beforeStepHooks) {
+          await hook(step, context);
+        }
+      },
+    });
+  }
+
+  const afterStepHooks = definedHookSets
+    .map((hookSet) => hookSet.afterStep)
+    .filter((hook): hook is NonNullable<ExecutionHooks<TContext>["afterStep"]> => hook !== undefined);
+  if (afterStepHooks.length) {
+    Object.assign(merged, {
+      async afterStep(step: ScenarioStep<TContext>, context: TContext, result: StepExecutionResult) {
+        for (const hook of afterStepHooks) {
+          await hook(step, context, result);
+        }
+      },
+    });
+  }
+
+  return merged;
+}
+
 function serializeError(error: unknown): SerializedError {
   if (error instanceof Error) {
     const serialized: SerializedError = {

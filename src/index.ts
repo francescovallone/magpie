@@ -17,10 +17,26 @@ export {
   executeScenario,
   type ExecuteScenarioOptions,
   type ExecutionHooks,
+  mergeExecutionHooks,
   type ScenarioExecutionResult,
   type StepExecutionResult,
 } from "./engine.js";
 export { scenario, defineAcceptanceScenario, type ScenarioBuilder } from "./dsl.js";
+export {
+  createGherkinScenarios,
+  createGherkinScenariosFromFile,
+  createGherkinStory,
+  createGherkinStoryFromFile,
+  defineGherkinStep,
+  type GherkinAcceptanceSource,
+  type GherkinImportOptions,
+  type GherkinStepArgument,
+  type GherkinStepArgumentDataTable,
+  type GherkinStepArgumentDocString,
+  type GherkinStepDefinition,
+  type GherkinStepDefinitionInput,
+  type GherkinStepMatch,
+} from "./gherkin.js";
 export { createScenarioFilter, filterScenarios, type ScenarioFilter } from "./filtering.js";
 export { resolveScenarioFilter, selectScenarios, type ScenarioFilterResolutionOptions } from "./cli.js";
 export { writeJsonReport, type JsonReportWriteOptions } from "./io.js";
