@@ -137,6 +137,64 @@ const filter = resolveScenarioFilter({
 registerFilteredStory(story, { filter });
 ```
 
+## Batch execution
+
+Use `executeScenarios()` to run a scenario set with dependency-aware scheduling.
+
+```ts
+import { defineAcceptanceScenario, executeScenarios } from "magpie";
+
+const seedInventory = defineAcceptanceScenario({
+  id: "inventory-seeded",
+  title: "Inventory is seeded",
+  steps: [
+    {
+      id: "seed-inventory",
+      name: "seed inventory",
+      type: "given",
+      execute: () => undefined,
+    },
+  ],
+});
+
+const loadPricing = defineAcceptanceScenario({
+  id: "pricing-loaded",
+  title: "Pricing is loaded",
+  steps: [
+    {
+      id: "load-pricing",
+      name: "load pricing",
+      type: "given",
+      execute: () => undefined,
+    },
+  ],
+});
+
+const openCheckout = defineAcceptanceScenario({
+  id: "checkout-ready",
+  title: "Checkout is ready",
+  dependsOn: ["inventory-seeded", "pricing-loaded"],
+  steps: [
+    {
+      id: "open-checkout",
+      name: "open checkout",
+      type: "when",
+      execute: () => undefined,
+    },
+  ],
+});
+
+const batch = await executeScenarios([seedInventory, loadPricing, openCheckout], {
+  maxConcurrency: 2,
+  createContext: () => ({}),
+});
+
+console.log(batch.results.map((result) => result.scenarioId));
+console.log(batch.skipped);
+```
+
+Dependencies are declared with `dependsOn`. Independent scenarios can run in parallel up to `maxConcurrency`, dependents wait for all prerequisites to finish, and downstream scenarios are skipped when an upstream dependency fails. For parallel runs, prefer `createContext()` so each scenario gets its own context object.
+
 ## Gherkin and Cucumber
 
 You can generate Magpie scenarios directly from Gherkin feature text and resolve steps with Cucumber expressions.
@@ -244,6 +302,27 @@ This package now configures Vitest to use the Magpie custom reporter as the prim
 - a JSON artifact is written automatically to `.magpie/reports/latest.json`
 - every run is also archived under `.magpie/reports/history/`
 - acceptance-style suites can opt in by using `reportToVitest: true`
+- pass `htmlOutputFile` (and optionally `htmlArchiveDirectory`) to `createMagpieVitestReporter()` to also write a human-friendly HTML report, archived the same way as the JSON report
+
+### Enabling the HTML report from the CLI
+
+`vitest.config.ts` checks `isOutputEnabled("html", ...)` and only turns on `htmlOutputFile`/`htmlArchiveDirectory` when asked to, so the HTML report is opt-in.
+
+Turn it on with either:
+
+- an environment variable: `MAGPIE_OUTPUT=html npm test`
+- a CLI flag through `npm test`: `npm test -- -- --output html`
+- a CLI flag calling `vitest` directly: `vitest run -- --output html`
+
+`--output` is a Magpie-specific flag, not a Vitest one, but Vitest's own CLI parser still rejects any flag it doesn't recognize, so `--output` always needs to come after a `--` that reaches Vitest. Calling `vitest` directly only needs one `--` (Vitest's own separator). Going through `npm test` needs two: the first `--` stops npm from parsing the flag itself, and the second is the one Vitest needs.
+
+`resolveOutputKinds()` and `isOutputEnabled()` are exported from `magpie` so you can reuse the same argv/env parsing in your own config or scripts:
+
+```ts
+import { isOutputEnabled } from "magpie";
+
+const htmlEnabled = isOutputEnabled("html", { argv: process.argv, env: process.env });
+```
 
 Example:
 
@@ -274,6 +353,64 @@ Run specific suites with:
 - `npm run test:acceptance`
 
 `test:unit` and `test:acceptance` now target separate named Vitest projects.
+
+## Debugging a failed scenario
+
+When a step throws, execution stops after that step (cleanup steps still run), and the failure is captured on the result instead of only a boolean pass/fail.
+
+`executeScenario()` resolves with a `failure` object describing which step threw and the serialized error:
+
+```ts
+const result = await executeScenario(loginScenario);
+
+// result.success === false
+// result.failure === {
+//   step: { id: "then-token", name: "token is returned", ... },
+//   error: { name: "Error", message: "Expected a successful login", stack: "..." },
+//   cause: Error: Expected a successful login
+// }
+```
+
+Only steps that actually ran are present in `result.steps` — if the failing step is not the last one, later main steps are omitted entirely rather than marked "skipped"; cleanup steps still run and are appended after the failure.
+
+The text report produced by `formatExecutionRunReport()` (and printed by the Magpie Vitest reporter, `createConsoleReporter`, etc.) prints the failing step's error message inline:
+
+```text
+Execution Report
+  Scenarios: 0/1 passed
+  Steps: 1/2 passed
+  Duration: 4ms
+
+Story
+  Authentication
+
+  Scenario
+    Registered user logs in
+      ✓ given registered user exists
+      ✗ then token is returned
+        ↳ Expected a successful login
+
+Acceptance
+  Implemented: AUTH-001
+  Missing: none
+```
+
+The JSON artifact written to `.magpie/reports/latest.json` (and archived under `.magpie/reports/history/`) keeps the same information in structured form, with `error` set on the failing step and on the scenario (fields trimmed below for brevity):
+
+```json
+{
+  "id": "auth-login",
+  "title": "Registered user logs in",
+  "status": "failed",
+  "error": "Expected a successful login",
+  "steps": [
+    { "id": "given-user", "status": "passed" },
+    { "id": "then-token", "status": "failed", "error": "Expected a successful login" }
+  ]
+}
+```
+
+When running through the Vitest adapter (`registerScenario`, `registerStory`, `registerFilteredStory`), a failed scenario also throws the original error inside the generated `it()` block, so Vitest's own failure output (stack trace, diff, etc.) still shows up alongside the Magpie report.
 
 ## CI artifacts
 
@@ -356,6 +493,34 @@ for (const entry of consoleReporter.entries) {
 await jsonReporter.flush();
 ```
 
+### HTML reporter
+
+`createHtmlReporter()` works the same way as `createJsonReporter()`, but it writes a self-contained HTML page (inline CSS, no external dependencies) instead of JSON. It is a drop-in `AcceptanceReporter`, so it can be used on its own or alongside the console and JSON reporters.
+
+```ts
+import { createHtmlReporter, defineStory, executeScenario } from "magpie";
+
+const story = defineStory({
+  title: "Authentication",
+  scenarios: [loginScenario],
+});
+
+const htmlReporter = createHtmlReporter({
+  outputPath: "./artifacts/authentication.report.html",
+  stories: [story],
+  expectedAcceptanceIds: ["AUTH-001", "AUTH-007"],
+});
+
+for (const scenario of story.scenarios) {
+  const result = await executeScenario(scenario);
+  htmlReporter.recordScenario(scenario, result);
+}
+
+await htmlReporter.flush();
+```
+
+Open `./artifacts/authentication.report.html` in a browser to see the same totals, story/scenario breakdown, and per-step pass/fail/error details as the text report, laid out as a page. If you already have an `ExecutionRunReport` (for example from `buildExecutionRunReport()`), you can also turn it into an HTML string directly with `formatExecutionRunReportAsHtml(report)`, or write it to disk with `writeHtmlReport(outputPath, report)`.
+
 The Vitest adapter can also record scenario results by passing `reporter` into `registerScenario()`, `registerStory()`, or `registerFilteredStory()`.
 
 ## Hooks
@@ -425,13 +590,10 @@ Implemented now:
 - reusable steps and extensible step types
 - hooks
 - filtering
-- reporting and JSON artifact output
+- reporting, JSON artifact output, and HTML artifact output
 - acceptance traceability
 
 Not implemented yet:
 
-- Gherkin generation
-- HTML reporting
 - live dashboards
-- parallel dependency-aware scenario execution
 - Playwright or non-Vitest adapters

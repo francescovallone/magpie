@@ -8,7 +8,9 @@ import {
   createAcceptanceTraceabilityReport,
   defineAcceptanceScenario,
   defineStory,
+  isOutputEnabled,
   registerFilteredStory,
+  resolveOutputKinds,
   resolveScenarioFilter,
   selectScenarios,
   writeJsonReport,
@@ -66,6 +68,24 @@ describe("CLI filter helpers", () => {
     });
 
     expect(selected).toEqual([authScenario]);
+  });
+});
+
+describe("output selection", () => {
+  it("parses output kinds from argv and env", () => {
+    const kinds = resolveOutputKinds({
+      argv: ["--output", "html", "--output=json"],
+      env: { MAGPIE_OUTPUT: "console" },
+    });
+
+    expect(kinds).toEqual(new Set(["console", "html", "json"]));
+  });
+
+  it("checks whether a specific output kind is enabled", () => {
+    expect(isOutputEnabled("html", { argv: ["--output", "html"] })).toBe(true);
+    expect(isOutputEnabled("html", { argv: ["--output", "json"] })).toBe(false);
+    expect(isOutputEnabled("html", { env: { MAGPIE_OUTPUT: "html" } })).toBe(true);
+    expect(isOutputEnabled("HTML", { argv: ["--output=html"] })).toBe(true);
   });
 });
 

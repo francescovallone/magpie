@@ -5,15 +5,18 @@ export interface JsonReportWriteOptions {
   readonly spacing?: number;
 }
 
+export async function writeTextFile(outputPath: string, content: string): Promise<void> {
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, content, "utf8");
+}
+
 export async function writeJsonReport(
   outputPath: string,
   report: unknown,
   options: JsonReportWriteOptions = {},
 ): Promise<void> {
-  await mkdir(dirname(outputPath), { recursive: true });
-
   const spacing = options.spacing ?? 2;
   const content = `${JSON.stringify(report, null, spacing)}\n`;
 
-  await writeFile(outputPath, content, "utf8");
+  await writeTextFile(outputPath, content);
 }

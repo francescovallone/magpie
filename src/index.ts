@@ -14,11 +14,15 @@ export {
   type StoryDefinitionInput,
 } from "./domain.js";
 export {
+  executeScenarios,
   executeScenario,
+  type ExecuteScenariosOptions,
   type ExecuteScenarioOptions,
   type ExecutionHooks,
   mergeExecutionHooks,
+  type ScenarioBatchExecutionResult,
   type ScenarioExecutionResult,
+  type SkippedScenarioExecutionResult,
   type StepExecutionResult,
 } from "./engine.js";
 export { scenario, defineAcceptanceScenario, type ScenarioBuilder } from "./dsl.js";
@@ -38,24 +42,35 @@ export {
   type GherkinStepMatch,
 } from "./gherkin.js";
 export { createScenarioFilter, filterScenarios, type ScenarioFilter } from "./filtering.js";
-export { resolveScenarioFilter, selectScenarios, type ScenarioFilterResolutionOptions } from "./cli.js";
-export { writeJsonReport, type JsonReportWriteOptions } from "./io.js";
+export {
+  isOutputEnabled,
+  resolveOutputKinds,
+  resolveScenarioFilter,
+  selectScenarios,
+  type OutputResolutionOptions,
+  type ScenarioFilterResolutionOptions,
+} from "./cli.js";
+export { writeJsonReport, writeTextFile, type JsonReportWriteOptions } from "./io.js";
 export {
   buildExecutionRunReport,
   createAcceptanceTraceabilityReport,
   createConsoleReporter,
+  createHtmlReporter,
   createJsonReporter,
   createReporter,
   createReportingHooks,
   createScenarioReport,
   createStoryReport,
   formatExecutionRunReport,
+  formatExecutionRunReportAsHtml,
   formatStoryReport,
+  writeHtmlReport,
   type AcceptanceTraceabilityReport,
   type AcceptanceReporter,
   type ConsoleReporterOptions,
   type ExecutionRunReport,
   type ExecutionRunTotals,
+  type HtmlReporterOptions,
   type JsonReporterOptions,
   type ReportBuildOptions,
   type ScenarioReport,

@@ -1,6 +1,6 @@
 import type { Scenario, Story } from "./domain.js";
 import type { ExecutionHooks, ScenarioExecutionResult } from "./engine.js";
-import { writeJsonReport, type JsonReportWriteOptions } from "./io.js";
+import { writeJsonReport, writeTextFile, type JsonReportWriteOptions } from "./io.js";
 
 export interface StepReport {
   readonly id: string;
@@ -101,6 +101,10 @@ export interface ConsoleReporterOptions<TContext extends object> extends ReportB
 export interface JsonReporterOptions<TContext extends object>
   extends ReportBuildOptions<TContext>,
     JsonReportWriteOptions {
+  readonly outputPath: string;
+}
+
+export interface HtmlReporterOptions<TContext extends object> extends ReportBuildOptions<TContext> {
   readonly outputPath: string;
 }
 
@@ -447,6 +451,33 @@ export function createJsonReporter<TContext extends object>(
   };
 }
 
+export async function writeHtmlReport(outputPath: string, report: ExecutionRunReport): Promise<void> {
+  await writeTextFile(outputPath, formatExecutionRunReportAsHtml(report));
+}
+
+export function createHtmlReporter<TContext extends object>(
+  options: HtmlReporterOptions<TContext>,
+): AcceptanceReporter<TContext> {
+  const base = createReporter<TContext>();
+
+  return {
+    get entries() {
+      return base.entries;
+    },
+    recordScenario(scenario, result) {
+      return base.recordScenario(scenario, result);
+    },
+    buildReport(reportOptions = {}) {
+      return base.buildReport({ ...options, ...reportOptions });
+    },
+    async flush(reportOptions = {}) {
+      const report = base.buildReport({ ...options, ...reportOptions });
+      await writeHtmlReport(options.outputPath, report);
+      return report;
+    },
+  };
+}
+
 export function formatStoryReport(report: StoryReport): string {
   const lines = ["Story", `  ${report.title}`, ""];
 
@@ -455,8 +486,12 @@ export function formatStoryReport(report: StoryReport): string {
     lines.push(`    ${scenario.title}`);
 
     for (const step of scenario.steps) {
-      const status = step.status === "passed" ? "✓" : "✗";
+      const status = step.status === "passed" ? "✓" : step.status === "skipped" ? "○" : "✗";
       lines.push(`      ${status} ${step.type} ${step.name}`);
+
+      if (step.error) {
+        lines.push(`        ↳ ${step.error}`);
+      }
     }
 
     lines.push("");
@@ -484,4 +519,102 @@ export function formatExecutionRunReport(report: ExecutionRunReport): string {
   lines.push(`  Missing: ${report.traceability.missing.join(", ") || "none"}`);
 
   return lines.join("\n").trimEnd();
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function stepStatusIcon(status: StepReport["status"]): string {
+  if (status === "passed") {
+    return "✓";
+  }
+
+  return status === "skipped" ? "○" : "✗";
+}
+
+function renderScenarioHtml(scenario: ScenarioReport): string {
+  const stepsHtml = scenario.steps
+    .map((step) => {
+      const errorHtml = step.error
+        ? `<p class="error">↳ ${escapeHtml(step.error)}</p>`
+        : "";
+
+      return `
+        <li class="step step-${step.status}">
+          <span class="icon">${stepStatusIcon(step.status)}</span>
+          <span class="step-label">${escapeHtml(step.type)} ${escapeHtml(step.name)}</span>
+          ${errorHtml}
+        </li>`;
+    })
+    .join("");
+
+  return `
+    <article class="scenario scenario-${scenario.status}">
+      <h3>${escapeHtml(scenario.title)}</h3>
+      <ul class="steps">${stepsHtml}
+      </ul>
+    </article>`;
+}
+
+function renderStoryHtml(story: StoryReport): string {
+  const scenariosHtml = story.scenarios.map(renderScenarioHtml).join("");
+
+  return `
+  <section class="story">
+    <h2>${escapeHtml(story.title)}</h2>
+    ${scenariosHtml}
+  </section>`;
+}
+
+export function formatExecutionRunReportAsHtml(report: ExecutionRunReport): string {
+  const storiesHtml = report.stories.map(renderStoryHtml).join("");
+  const implemented = report.traceability.implemented.join(", ") || "none";
+  const missing = report.traceability.missing.join(", ") || "none";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Magpie Execution Report</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; color: #1a1a1a; background: #fafafa; }
+    h1 { margin-bottom: 0.25rem; }
+    .summary { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; color: #444; }
+    .story { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+    .scenario { border-top: 1px solid #eee; padding-top: 0.75rem; margin-top: 0.75rem; }
+    .scenario:first-of-type { border-top: none; margin-top: 0; }
+    .scenario h3 { margin: 0 0 0.5rem; }
+    .scenario-failed h3 { color: #b00020; }
+    .scenario-passed h3 { color: #1b5e20; }
+    ul.steps { list-style: none; margin: 0; padding: 0; }
+    li.step { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; padding: 0.15rem 0; }
+    li.step-passed .icon { color: #1b5e20; }
+    li.step-failed .icon { color: #b00020; }
+    li.step-skipped .icon { color: #9e9e9e; }
+    .error { flex-basis: 100%; margin: 0.1rem 0 0.25rem 1.75rem; color: #b00020; }
+    .acceptance { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1rem 1.25rem; }
+  </style>
+</head>
+<body>
+  <h1>Magpie Execution Report</h1>
+  <div class="summary">
+    <span>Scenarios: ${report.totals.passedScenarioCount}/${report.totals.scenarioCount} passed</span>
+    <span>Steps: ${report.totals.passedStepCount}/${report.totals.stepCount} passed</span>
+    <span>Duration: ${report.totals.duration}ms</span>
+  </div>
+  ${storiesHtml}
+  <section class="acceptance">
+    <h2>Acceptance</h2>
+    <p>Implemented: ${escapeHtml(implemented)}</p>
+    <p>Missing: ${escapeHtml(missing)}</p>
+  </section>
+</body>
+</html>
+`;
 }

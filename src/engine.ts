@@ -50,6 +50,18 @@ export interface ScenarioExecutionResult<TContext extends object> {
   readonly failure?: ScenarioFailure<TContext>;
 }
 
+export interface SkippedScenarioExecutionResult {
+  readonly scenarioId: string;
+  readonly scenarioTitle: string;
+  readonly dependsOn: ReadonlyArray<string>;
+  readonly reason: "dependency_failed";
+}
+
+export interface ScenarioBatchExecutionResult<TContext extends object> {
+  readonly results: ReadonlyArray<ScenarioExecutionResult<TContext>>;
+  readonly skipped: ReadonlyArray<SkippedScenarioExecutionResult>;
+}
+
 export interface ExecutionHooks<TContext extends object> {
   readonly beforeScenario?: (scenario: Scenario<TContext>, context: TContext) => Promise<void> | void;
   readonly afterScenario?: (
@@ -70,6 +82,11 @@ export interface ExecuteScenarioOptions<TContext extends object> {
   readonly createContext?: () => TContext;
   readonly hooks?: ExecutionHooks<TContext>;
   readonly now?: () => number;
+}
+
+export interface ExecuteScenariosOptions<TContext extends object>
+  extends ExecuteScenarioOptions<TContext> {
+  readonly maxConcurrency?: number;
 }
 
 export function mergeExecutionHooks<TContext extends object>(
@@ -195,6 +212,233 @@ function partitionSteps<TContext extends object>(scenario: Scenario<TContext>) {
   }
 
   return { mainSteps, cleanupSteps };
+}
+
+interface ScenarioExecutionNode<TContext extends object> {
+  readonly scenario: Scenario<TContext>;
+  readonly dependencies: ReadonlyArray<string>;
+  readonly dependents: Array<string>;
+  pendingDependencies: number;
+  readonly failedDependencies: Set<string>;
+}
+
+function resolveMaxConcurrency(count: number, requested: number | undefined): number {
+  if (requested === undefined) {
+    return Math.max(1, count);
+  }
+
+  if (!Number.isInteger(requested) || requested < 1) {
+    throw new Error("maxConcurrency must be an integer greater than 0");
+  }
+
+  return requested;
+}
+
+function createScenarioExecutionNodes<TContext extends object>(
+  scenarios: ReadonlyArray<Scenario<TContext>>,
+): Map<string, ScenarioExecutionNode<TContext>> {
+  const nodes = new Map<string, ScenarioExecutionNode<TContext>>();
+
+  for (const scenario of scenarios) {
+    if (nodes.has(scenario.id)) {
+      throw new Error(`Duplicate scenario id: ${scenario.id}`);
+    }
+
+    const dependencies = scenario.dependsOn ?? [];
+
+    if (dependencies.includes(scenario.id)) {
+      throw new Error(`Scenario cannot depend on itself: ${scenario.id}`);
+    }
+
+    nodes.set(scenario.id, {
+      scenario,
+      dependencies,
+      dependents: [],
+      pendingDependencies: dependencies.length,
+      failedDependencies: new Set<string>(),
+    });
+  }
+
+  for (const node of nodes.values()) {
+    for (const dependencyId of node.dependencies) {
+      const dependencyNode = nodes.get(dependencyId);
+
+      if (!dependencyNode) {
+        throw new Error(
+          `Scenario ${node.scenario.id} depends on missing scenario ${dependencyId}`,
+        );
+      }
+
+      dependencyNode.dependents.push(node.scenario.id);
+    }
+  }
+
+  const remainingDependencies = new Map(
+    Array.from(nodes.values(), (node) => [node.scenario.id, node.dependencies.length]),
+  );
+  const queue = Array.from(nodes.values())
+    .filter((node) => node.dependencies.length === 0)
+    .map((node) => node.scenario.id);
+  let visitedCount = 0;
+
+  while (queue.length > 0) {
+    const scenarioId = queue.shift();
+
+    if (!scenarioId) {
+      break;
+    }
+
+    visitedCount += 1;
+    const node = nodes.get(scenarioId);
+
+    if (!node) {
+      continue;
+    }
+
+    for (const dependentId of node.dependents) {
+      const nextCount = (remainingDependencies.get(dependentId) ?? 0) - 1;
+      remainingDependencies.set(dependentId, nextCount);
+
+      if (nextCount === 0) {
+        queue.push(dependentId);
+      }
+    }
+  }
+
+  if (visitedCount !== scenarios.length) {
+    throw new Error("Cyclic scenario dependency detected");
+  }
+
+  return nodes;
+}
+
+export async function executeScenarios<TContext extends object>(
+  scenarios: ReadonlyArray<Scenario<TContext>>,
+  options: ExecuteScenariosOptions<TContext> = {},
+): Promise<ScenarioBatchExecutionResult<TContext>> {
+  const maxConcurrency = resolveMaxConcurrency(scenarios.length, options.maxConcurrency);
+
+  if (options.context !== undefined && maxConcurrency > 1) {
+    throw new Error(
+      "executeScenarios does not support shared context when maxConcurrency is greater than 1",
+    );
+  }
+
+  if (scenarios.length === 0) {
+    return {
+      results: Object.freeze([]),
+      skipped: Object.freeze([]),
+    };
+  }
+
+  const nodes = createScenarioExecutionNodes(scenarios);
+  const readyQueue = scenarios
+    .filter((scenario) => (scenario.dependsOn?.length ?? 0) === 0)
+    .map((scenario) => scenario.id);
+  const resultsById = new Map<string, ScenarioExecutionResult<TContext>>();
+  const skippedById = new Map<string, SkippedScenarioExecutionResult>();
+
+  const markResolved = (scenarioId: string, success: boolean) => {
+    const node = nodes.get(scenarioId);
+
+    if (!node) {
+      return;
+    }
+
+    for (const dependentId of node.dependents) {
+      const dependent = nodes.get(dependentId);
+
+      if (!dependent) {
+        continue;
+      }
+
+      dependent.pendingDependencies -= 1;
+
+      if (!success) {
+        dependent.failedDependencies.add(scenarioId);
+      }
+
+      if (dependent.pendingDependencies === 0) {
+        if (dependent.failedDependencies.size > 0) {
+          skippedById.set(dependent.scenario.id, {
+            scenarioId: dependent.scenario.id,
+            scenarioTitle: dependent.scenario.title,
+            dependsOn: Object.freeze(Array.from(dependent.failedDependencies)),
+            reason: "dependency_failed",
+          });
+          markResolved(dependent.scenario.id, false);
+          continue;
+        }
+
+        readyQueue.push(dependent.scenario.id);
+      }
+    }
+  };
+
+  await new Promise<void>((resolve, reject) => {
+    let activeExecutions = 0;
+
+    const maybeFinish = () => {
+      if (resultsById.size + skippedById.size === scenarios.length && activeExecutions === 0) {
+        resolve();
+      }
+    };
+
+    const schedule = () => {
+      while (activeExecutions < maxConcurrency && readyQueue.length > 0) {
+        const scenarioId = readyQueue.shift();
+
+        if (!scenarioId) {
+          continue;
+        }
+
+        if (resultsById.has(scenarioId) || skippedById.has(scenarioId)) {
+          continue;
+        }
+
+        const node = nodes.get(scenarioId);
+
+        if (!node) {
+          continue;
+        }
+
+        activeExecutions += 1;
+
+        void executeScenario(node.scenario, options)
+          .then((result) => {
+            resultsById.set(node.scenario.id, result);
+            markResolved(node.scenario.id, result.success);
+          })
+          .then(() => {
+            activeExecutions -= 1;
+            schedule();
+            maybeFinish();
+          })
+          .catch((error) => {
+            reject(error);
+          });
+      }
+
+      maybeFinish();
+    };
+
+    schedule();
+  });
+
+  return {
+    results: Object.freeze(
+      scenarios.flatMap((scenario) => {
+        const result = resultsById.get(scenario.id);
+        return result ? [result] : [];
+      }),
+    ),
+    skipped: Object.freeze(
+      scenarios.flatMap((scenario) => {
+        const skipped = skippedById.get(scenario.id);
+        return skipped ? [skipped] : [];
+      }),
+    ),
+  };
 }
 
 export async function executeScenario<TContext extends object>(

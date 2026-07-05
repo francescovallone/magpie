@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createConsoleReporter,
+  createHtmlReporter,
   createJsonReporter,
   createReportingHooks,
   createReporter,
@@ -13,10 +14,51 @@ import {
   defineStory,
   executeScenario,
   formatExecutionRunReport,
+  formatExecutionRunReportAsHtml,
   registerScenario,
 } from "../src/index.js";
 
 describe("reporter", () => {
+  it("prints the failing step's error message in the formatted report", async () => {
+    const reporter = createReporter<{ response?: { status: number } }>();
+    const scenario = defineAcceptanceScenario<{ response?: { status: number } }>({
+      id: "auth-login",
+      title: "Registered user logs in",
+      acceptance: ["AUTH-001"],
+      story: { title: "Authentication" },
+      steps: [
+        {
+          id: "given-user",
+          name: "registered user exists",
+          type: "given",
+          execute: (context) => {
+            context.response = { status: 401 };
+          },
+        },
+        {
+          id: "then-token",
+          name: "token is returned",
+          type: "then",
+          execute: (context) => {
+            if (context.response?.status !== 200) {
+              throw new Error("Expected a successful login");
+            }
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(scenario);
+    reporter.recordScenario(scenario, result);
+
+    const report = reporter.buildReport({ now: () => 0 });
+    const output = formatExecutionRunReport(report);
+
+    expect(result.success).toBe(false);
+    expect(output).toContain("✗ then token is returned");
+    expect(output).toContain("↳ Expected a successful login");
+  });
+
   it("collects scenario results and builds a run report", async () => {
     const reporter = createReporter<Record<string, unknown>>();
     const scenario = defineAcceptanceScenario<Record<string, unknown>>({
@@ -111,6 +153,52 @@ describe("reporter", () => {
     expect(writer).toHaveBeenCalledTimes(1);
     expect(writer.mock.calls[0]?.[0]).toContain("Authentication");
     expect(JSON.parse(fileContent)).toEqual(jsonReport);
+  });
+
+  it("writes an HTML reporter artifact that contains scenario and failure details", async () => {
+    const htmlPath = join(tmpdir(), `magpie-report-${Date.now()}.html`);
+    const htmlReporter = createHtmlReporter<{ response?: { status: number } }>({
+      outputPath: htmlPath,
+      expectedAcceptanceIds: ["AUTH-001"],
+    });
+    const subject = defineAcceptanceScenario<{ response?: { status: number } }>({
+      id: "auth-login",
+      title: "Registered user logs in",
+      acceptance: ["AUTH-001"],
+      story: { title: "Authentication" },
+      steps: [
+        {
+          id: "given-user",
+          name: "registered user exists",
+          type: "given",
+          execute: (context) => {
+            context.response = { status: 401 };
+          },
+        },
+        {
+          id: "then-token",
+          name: "token is returned",
+          type: "then",
+          execute: (context) => {
+            if (context.response?.status !== 200) {
+              throw new Error("Expected a successful login");
+            }
+          },
+        },
+      ],
+    });
+    const result = await executeScenario(subject);
+
+    htmlReporter.recordScenario(subject, result);
+    const report = await htmlReporter.flush();
+    const html = await readFile(htmlPath, "utf8");
+
+    expect(result.success).toBe(false);
+    expect(html).toContain("<!doctype html>");
+    expect(html).toContain("Authentication");
+    expect(html).toContain("Registered user logs in");
+    expect(html).toContain("Expected a successful login");
+    expect(html).toBe(formatExecutionRunReportAsHtml(report));
   });
 
   it("allows the Vitest adapter to report results without taking over execution", async () => {

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
 
 import { writeJsonReport } from "./io.js";
-import { formatExecutionRunReport, type ReportBuildOptions } from "./reporting.js";
+import { formatExecutionRunReport, writeHtmlReport, type ReportBuildOptions } from "./reporting.js";
 import {
   buildVitestReporterExecutionReport,
   resetVitestReporterRecords,
@@ -15,12 +15,14 @@ export interface MagpieVitestReporterOptions
     VitestReporterBridgeOptions {
   readonly jsonOutputFile?: string;
   readonly jsonArchiveDirectory?: string;
+  readonly htmlOutputFile?: string;
+  readonly htmlArchiveDirectory?: string;
   readonly spacing?: number;
   readonly write?: (text: string) => Promise<void> | void;
 }
 
-function createTimestampedReportFileName(timestamp: number): string {
-  return new Date(timestamp).toISOString().replace(/[:.]/g, "-") + ".json";
+function createTimestampedReportFileName(timestamp: number, extension: string): string {
+  return new Date(timestamp).toISOString().replace(/[:.]/g, "-") + extension;
 }
 
 export class MagpieVitestReporter implements Reporter {
@@ -53,9 +55,16 @@ export class MagpieVitestReporter implements Reporter {
       });
 
       const archiveDirectory = this.options.jsonArchiveDirectory ?? join(dirname(this.options.jsonOutputFile), "history");
-      await writeJsonReport(join(archiveDirectory, createTimestampedReportFileName(report.generatedAt)), report, {
+      await writeJsonReport(join(archiveDirectory, createTimestampedReportFileName(report.generatedAt, ".json")), report, {
         ...(this.options.spacing !== undefined ? { spacing: this.options.spacing } : {}),
       });
+    }
+
+    if (this.options.htmlOutputFile) {
+      await writeHtmlReport(this.options.htmlOutputFile, report);
+
+      const archiveDirectory = this.options.htmlArchiveDirectory ?? join(dirname(this.options.htmlOutputFile), "history");
+      await writeHtmlReport(join(archiveDirectory, createTimestampedReportFileName(report.generatedAt, ".html")), report);
     }
   }
 }

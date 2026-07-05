@@ -10,6 +10,7 @@ import {
 
 export interface ScenarioBuilder<TContext extends object> {
   acceptance(...ids: ReadonlyArray<string>): ScenarioBuilder<TContext>;
+  dependsOn(...scenarioIds: ReadonlyArray<string>): ScenarioBuilder<TContext>;
   description(text: string): ScenarioBuilder<TContext>;
   tag(...tags: ReadonlyArray<string>): ScenarioBuilder<TContext>;
   metadata(values: Record<string, unknown>): ScenarioBuilder<TContext>;
@@ -27,6 +28,7 @@ interface ScenarioBuilderState<TContext extends object> {
   title: string;
   description?: string;
   acceptance: Array<string>;
+  dependsOn: Array<string>;
   tags: Array<string>;
   metadata: Record<string, unknown>;
   steps: Array<ScenarioStep<TContext> | StepDefinitionInput<TContext>>;
@@ -53,6 +55,7 @@ export function scenario<TContext extends object = Record<string, unknown>>(
     id,
     title,
     acceptance: [],
+    dependsOn: [],
     tags: [],
     metadata: {},
     steps: [],
@@ -61,6 +64,10 @@ export function scenario<TContext extends object = Record<string, unknown>>(
   const builder: ScenarioBuilder<TContext> = {
     acceptance(...ids) {
       state.acceptance = [...(state.acceptance ?? []), ...ids];
+      return builder;
+    },
+    dependsOn(...scenarioIds) {
+      state.dependsOn = [...(state.dependsOn ?? []), ...scenarioIds];
       return builder;
     },
     description(text) {
@@ -99,6 +106,7 @@ export function scenario<TContext extends object = Record<string, unknown>>(
         id: state.id,
         title: state.title,
         acceptance: state.acceptance,
+        ...(state.dependsOn.length > 0 ? { dependsOn: state.dependsOn } : {}),
         tags: state.tags,
         metadata: state.metadata,
         steps: state.steps,

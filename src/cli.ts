@@ -151,3 +151,52 @@ export function selectScenarios<TContext extends object>(
 ): ReadonlyArray<Scenario<TContext>> {
   return filterScenarios(scenarios, resolveScenarioFilter(options));
 }
+
+export interface OutputResolutionOptions {
+  readonly argv?: ReadonlyArray<string>;
+  readonly env?: Record<string, string | undefined>;
+  readonly envPrefix?: string;
+}
+
+/**
+ * Parses which report output formats (e.g. "html", "json") were requested
+ * through `--output <kind>` / `--output=<kind>` CLI flags or the
+ * `MAGPIE_OUTPUT` environment variable. Named `--output` (not `--reporter`)
+ * so it never collides with Vitest's own built-in `--reporter` CLI flag.
+ */
+export function resolveOutputKinds(
+  options: OutputResolutionOptions = {},
+): ReadonlySet<string> {
+  const argv = options.argv ?? [];
+  const env = options.env ?? {};
+  const prefix = options.envPrefix ?? "MAGPIE";
+  const kinds: Array<string> = splitCsv(env[`${prefix}_OUTPUT`]);
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    const nextValue = argv[index + 1];
+
+    if (argument === undefined) {
+      continue;
+    }
+
+    if (argument === "--output") {
+      pushArgValue(kinds, nextValue);
+      index += 1;
+      continue;
+    }
+
+    if (argument.startsWith("--output=")) {
+      pushArgValue(kinds, argument.slice("--output=".length));
+    }
+  }
+
+  return new Set(kinds.map((kind) => kind.toLowerCase()));
+}
+
+export function isOutputEnabled(
+  kind: string,
+  options: OutputResolutionOptions = {},
+): boolean {
+  return resolveOutputKinds(options).has(kind.toLowerCase());
+}

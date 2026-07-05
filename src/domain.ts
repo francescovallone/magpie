@@ -47,6 +47,7 @@ export interface Scenario<TContext extends object = Record<string, unknown>> {
   readonly title: string;
   readonly description?: string;
   readonly acceptance: ReadonlyArray<AcceptanceReference>;
+  readonly dependsOn?: ReadonlyArray<string>;
   readonly tags: ReadonlyArray<string>;
   readonly metadata: Metadata;
   readonly steps: ReadonlyArray<ScenarioStep<TContext>>;
@@ -75,6 +76,7 @@ export interface ScenarioDefinitionInput<TContext extends object> {
   readonly title: string;
   readonly description?: string;
   readonly acceptance?: ReadonlyArray<AcceptanceReference>;
+  readonly dependsOn?: ReadonlyArray<string>;
   readonly tags?: ReadonlyArray<string>;
   readonly metadata?: Record<string, unknown>;
   readonly steps: ReadonlyArray<ScenarioStep<TContext> | StepDefinitionInput<TContext>>;
@@ -186,6 +188,10 @@ export function defineScenario<TContext extends object>(
 
   if (input.description !== undefined) {
     Object.assign(scenario, { description: input.description });
+  }
+
+  if (input.dependsOn !== undefined) {
+    Object.assign(scenario, { dependsOn: Object.freeze([...input.dependsOn]) });
   }
 
   if (input.story) {
