@@ -1,3 +1,4 @@
+import { readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
@@ -10,19 +11,44 @@ import {
   type VitestReporterBridgeOptions,
 } from "./vitest-bridge.js";
 
+export const DEFAULT_HISTORY_FILE_LIMIT = 3;
+
 export interface MagpieVitestReporterOptions
   extends ReportBuildOptions<Record<string, unknown>>,
     VitestReporterBridgeOptions {
   readonly jsonOutputFile?: string;
   readonly jsonArchiveDirectory?: string;
+  readonly jsonHistoryLimit?: number;
   readonly htmlOutputFile?: string;
   readonly htmlArchiveDirectory?: string;
+  readonly htmlHistoryLimit?: number;
   readonly spacing?: number;
   readonly write?: (text: string) => Promise<void> | void;
 }
 
 function createTimestampedReportFileName(timestamp: number, extension: string): string {
   return new Date(timestamp).toISOString().replace(/[:.]/g, "-") + extension;
+}
+
+async function pruneArchiveDirectory(directory: string, limit: number): Promise<void> {
+  if (!Number.isFinite(limit) || limit < 0) {
+    return;
+  }
+
+  let entries: ReadonlyArray<string>;
+  try {
+    entries = await readdir(directory);
+  } catch {
+    return;
+  }
+
+  const excess = entries.length - limit;
+  if (excess <= 0) {
+    return;
+  }
+
+  const staleEntries = [...entries].sort().slice(0, excess);
+  await Promise.all(staleEntries.map((name) => rm(join(directory, name), { force: true })));
 }
 
 export class MagpieVitestReporter implements Reporter {
@@ -58,6 +84,8 @@ export class MagpieVitestReporter implements Reporter {
       await writeJsonReport(join(archiveDirectory, createTimestampedReportFileName(report.generatedAt, ".json")), report, {
         ...(this.options.spacing !== undefined ? { spacing: this.options.spacing } : {}),
       });
+
+      await pruneArchiveDirectory(archiveDirectory, this.options.jsonHistoryLimit ?? DEFAULT_HISTORY_FILE_LIMIT);
     }
 
     if (this.options.htmlOutputFile) {
@@ -65,6 +93,8 @@ export class MagpieVitestReporter implements Reporter {
 
       const archiveDirectory = this.options.htmlArchiveDirectory ?? join(dirname(this.options.htmlOutputFile), "history");
       await writeHtmlReport(join(archiveDirectory, createTimestampedReportFileName(report.generatedAt, ".html")), report);
+
+      await pruneArchiveDirectory(archiveDirectory, this.options.htmlHistoryLimit ?? DEFAULT_HISTORY_FILE_LIMIT);
     }
   }
 }

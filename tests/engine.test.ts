@@ -440,3 +440,61 @@ describe("reporting and filtering", () => {
     expect(report).toContain("Registered user logs in");
   });
 });
+
+describe("defineStory", () => {
+  it("backfills story information onto pre-built scenarios defined before the story", () => {
+    const preBuiltScenario = defineAcceptanceScenario({
+      id: "auth-1",
+      title: "Registered user logs in",
+      acceptance: ["AUTH-001"],
+      steps: [],
+    });
+
+    const story = defineStory({
+      id: "story-auth",
+      title: "Authentication",
+      description: "Login related scenarios",
+      scenarios: [preBuiltScenario],
+    });
+
+    expect(preBuiltScenario.story).toBeUndefined();
+    expect(story.scenarios[0]?.story).toEqual({
+      id: "story-auth",
+      title: "Authentication",
+      description: "Login related scenarios",
+    });
+  });
+
+  it("backfills story information onto scenario definition inputs defined before the story", () => {
+    const story = defineStory({
+      title: "Authentication",
+      scenarios: [
+        {
+          id: "auth-2",
+          title: "Locked user is rejected",
+          acceptance: ["AUTH-002"],
+          steps: [],
+        },
+      ],
+    });
+
+    expect(story.scenarios[0]?.story).toEqual({ title: "Authentication" });
+  });
+
+  it("does not override a scenario's own explicit story reference", () => {
+    const story = defineStory({
+      title: "Authentication",
+      scenarios: [
+        {
+          id: "auth-3",
+          title: "Custom story scenario",
+          acceptance: [],
+          story: { title: "Custom Story" },
+          steps: [],
+        },
+      ],
+    });
+
+    expect(story.scenarios[0]?.story).toEqual({ title: "Custom Story" });
+  });
+});

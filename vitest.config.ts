@@ -1,7 +1,7 @@
 import { defineConfig, defineProject } from "vitest/config";
 
 import { isOutputEnabled } from "./src/cli.js";
-import { createMagpieVitestReporter } from "./src/vitest-reporter.js";
+import { magpiePlugin } from "./src/plugin.js";
 
 const htmlReportingEnabled = isOutputEnabled("html", {
   argv: process.argv,
@@ -9,19 +9,19 @@ const htmlReportingEnabled = isOutputEnabled("html", {
 });
 
 export default defineConfig({
+  plugins: [
+    magpiePlugin({
+      jsonOutputFile: ".magpie/reports/latest.json",
+      jsonArchiveDirectory: ".magpie/reports/history",
+      ...(htmlReportingEnabled
+        ? {
+            htmlOutputFile: ".magpie/reports/latest.html",
+            htmlArchiveDirectory: ".magpie/reports/history",
+          }
+        : {}),
+    }),
+  ],
   test: {
-    reporters: [
-      createMagpieVitestReporter({
-        jsonOutputFile: ".magpie/reports/latest.json",
-        jsonArchiveDirectory: ".magpie/reports/history",
-        ...(htmlReportingEnabled
-          ? {
-              htmlOutputFile: ".magpie/reports/latest.html",
-              htmlArchiveDirectory: ".magpie/reports/history",
-            }
-          : {}),
-      }),
-    ],
     projects: [
       defineProject({
         test: {

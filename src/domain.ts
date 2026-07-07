@@ -204,10 +204,20 @@ export function defineScenario<TContext extends object>(
 export function defineStory<TContext extends object>(
   input: StoryDefinitionInput<TContext>,
 ): Story<TContext> {
+  const storyReference: StoryReference = {
+    ...(input.id !== undefined ? { id: input.id } : {}),
+    ...(input.description !== undefined ? { description: input.description } : {}),
+    title: input.title,
+  };
+
   const scenarios: ReadonlyArray<Scenario<TContext>> = Object.freeze(
-    input.scenarios.map((scenario) =>
-      isScenarioDefinition(scenario) ? scenario : defineScenario(scenario),
-    ),
+    input.scenarios.map((scenario) => {
+      if (isScenarioDefinition(scenario)) {
+        return scenario.story ? scenario : deepFreeze({ ...scenario, story: storyReference });
+      }
+
+      return defineScenario({ ...scenario, story: scenario.story ?? storyReference });
+    }),
   );
 
   const story: Story<TContext> = {

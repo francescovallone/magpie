@@ -296,13 +296,53 @@ Supported environment variables:
 
 ## Vitest reporter
 
-This package now configures Vitest to use the Magpie custom reporter as the primary terminal reporter.
+Vitest has no auto-discovery mechanism for reporters (unlike ESLint/Babel plugin resolution) — `test.reporters` is a plain array read from your config, so it must be wired up explicitly. `magpie` exposes both the low-level reporter and a Vite plugin that does that wiring for you.
+
+### Option 1: `magpiePlugin()` (recommended)
+
+Add it to `plugins` in `vite.config.ts`/`vitest.config.ts`. Its `config()` hook merges a `MagpieVitestReporter` into `test.reporters` automatically (Vite concatenates array-valued config returned from plugin hooks, so this composes with any reporters you already list instead of replacing them):
+
+```ts
+import { defineConfig } from "vitest/config";
+import { magpiePlugin } from "magpie";
+
+export default defineConfig({
+  plugins: [
+    magpiePlugin({
+      jsonOutputFile: ".magpie/reports/latest.json",
+      jsonArchiveDirectory: ".magpie/reports/history",
+    }),
+  ],
+});
+```
+
+### Option 2: `createMagpieVitestReporter()` directly
+
+If you'd rather control the `reporters` array yourself:
+
+```ts
+import { defineConfig } from "vitest/config";
+import { createMagpieVitestReporter } from "magpie";
+
+export default defineConfig({
+  test: {
+    reporters: [
+      createMagpieVitestReporter({
+        jsonOutputFile: ".magpie/reports/latest.json",
+        jsonArchiveDirectory: ".magpie/reports/history",
+      }),
+    ],
+  },
+});
+```
+
+Either way, once configured:
 
 - `npm test` prints the Magpie acceptance report at the end of the run
 - a JSON artifact is written automatically to `.magpie/reports/latest.json`
-- every run is also archived under `.magpie/reports/history/`
+- every run is also archived under `.magpie/reports/history/`, keeping the most recent 3 archives by default (override with `jsonHistoryLimit`/`htmlHistoryLimit`)
 - acceptance-style suites can opt in by using `reportToVitest: true`
-- pass `htmlOutputFile` (and optionally `htmlArchiveDirectory`) to `createMagpieVitestReporter()` to also write a human-friendly HTML report, archived the same way as the JSON report
+- pass `htmlOutputFile` (and optionally `htmlArchiveDirectory`) to also write a human-friendly HTML report, archived the same way as the JSON report
 
 ### Enabling the HTML report from the CLI
 

@@ -86,8 +86,10 @@ export {
 export {
   MagpieVitestReporter,
   createMagpieVitestReporter,
+  DEFAULT_HISTORY_FILE_LIMIT,
   type MagpieVitestReporterOptions,
 } from "./vitest-reporter.js";
+export { magpiePlugin, type MagpiePluginOptions } from "./plugin.js";
 export {
   appendVitestReporterRecord,
   buildVitestReporterExecutionReport,

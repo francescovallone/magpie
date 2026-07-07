@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,7 @@ import {
   appendVitestReporterRecord,
   buildVitestReporterExecutionReport,
   createMagpieVitestReporter,
+  DEFAULT_HISTORY_FILE_LIMIT,
   defineAcceptanceScenario,
   executeScenario,
   resetVitestReporterRecords,
@@ -74,6 +75,70 @@ describe("MagpieVitestReporter", () => {
     expect(write.mock.calls[0]?.[0]).toContain("Execution Report");
     expect(json.totals.scenarioCount).toBe(1);
     expect(JSON.parse(archivedFiles).totals.scenarioCount).toBe(1);
+  });
+
+  it("prunes archived JSON history files down to the default limit of 3", async () => {
+    const recordsDirectory = join(tmpdir(), `magpie-vitest-${Date.now()}-prune`);
+    const jsonOutputFile = join(tmpdir(), `magpie-vitest-${Date.now()}-prune-report.json`);
+    const jsonArchiveDirectory = join(tmpdir(), `magpie-vitest-${Date.now()}-prune-history`);
+    const reporter = createMagpieVitestReporter({
+      recordsDirectory,
+      jsonOutputFile,
+      jsonArchiveDirectory,
+      write: vi.fn(),
+    });
+    const scenario = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "auth-1",
+      title: "Registered user logs in",
+      acceptance: ["AUTH-001"],
+      story: { title: "Authentication" },
+      steps: [],
+    });
+
+    await mkdir(jsonArchiveDirectory, { recursive: true });
+    for (const name of ["2020-01-01T00-00-00-000Z.json", "2020-01-02T00-00-00-000Z.json", "2020-01-03T00-00-00-000Z.json"]) {
+      await writeFile(join(jsonArchiveDirectory, name), "{}", "utf8");
+    }
+
+    const result = await executeScenario(scenario);
+    await appendVitestReporterRecord(scenario, result, { recordsDirectory });
+    await reporter.onTestRunEnd?.([], [], "passed");
+
+    const archivedEntries = await readdir(jsonArchiveDirectory);
+
+    expect(archivedEntries).toHaveLength(DEFAULT_HISTORY_FILE_LIMIT);
+    expect(archivedEntries).not.toContain("2020-01-01T00-00-00-000Z.json");
+  });
+
+  it("honors a custom jsonHistoryLimit option", async () => {
+    const recordsDirectory = join(tmpdir(), `magpie-vitest-${Date.now()}-prune-custom`);
+    const jsonOutputFile = join(tmpdir(), `magpie-vitest-${Date.now()}-prune-custom-report.json`);
+    const jsonArchiveDirectory = join(tmpdir(), `magpie-vitest-${Date.now()}-prune-custom-history`);
+    const reporter = createMagpieVitestReporter({
+      recordsDirectory,
+      jsonOutputFile,
+      jsonArchiveDirectory,
+      jsonHistoryLimit: 1,
+      write: vi.fn(),
+    });
+    const scenario = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "auth-1",
+      title: "Registered user logs in",
+      acceptance: ["AUTH-001"],
+      story: { title: "Authentication" },
+      steps: [],
+    });
+
+    await mkdir(jsonArchiveDirectory, { recursive: true });
+    await writeFile(join(jsonArchiveDirectory, "2020-01-01T00-00-00-000Z.json"), "{}", "utf8");
+
+    const result = await executeScenario(scenario);
+    await appendVitestReporterRecord(scenario, result, { recordsDirectory });
+    await reporter.onTestRunEnd?.([], [], "passed");
+
+    const archivedEntries = await readdir(jsonArchiveDirectory);
+
+    expect(archivedEntries).toHaveLength(1);
   });
 
   it("prints and optionally writes HTML output on test-run end", async () => {
