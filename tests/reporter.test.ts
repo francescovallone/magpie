@@ -117,8 +117,11 @@ describe("reporter", () => {
     ]);
 
     const output = formatExecutionRunReport(report);
-    expect(output).toContain("Sub-scenario AC-001-01");
-    expect(output).toContain("Sub-scenario AC-001-02");
+    expect(output).toContain("Sub-scenarios");
+    expect(output).toContain("AC-001-01");
+    expect(output).toContain("AC-001-02");
+    expect(output).toContain("payment succeeds");
+    expect(output).toContain("payment is declined");
   });
 
   it("collects scenario results and builds a run report", async () => {
@@ -260,6 +263,61 @@ describe("reporter", () => {
     expect(html).toContain("Authentication");
     expect(html).toContain("Registered user logs in");
     expect(html).toContain("Expected a successful login");
+    expect(html).toBe(formatExecutionRunReportAsHtml(report));
+  });
+
+  it("hides main scenario steps and renders sub-scenarios separately in HTML", async () => {
+    const htmlPath = join(tmpdir(), `magpie-report-${Date.now()}.html`);
+    const htmlReporter = createHtmlReporter<{ value?: number }>({
+      outputPath: htmlPath,
+    });
+    const subject = defineAcceptanceScenario<{ value?: number }>({
+      id: "checkout",
+      title: "Checkout flows",
+      acceptance: ["AC-001"],
+      steps: [
+        {
+          id: "given-valid-card",
+          name: "customer has a valid card",
+          type: "given",
+          execute: (context) => {
+            context.value = 1;
+          },
+        },
+        {
+          id: "then-success",
+          name: "payment succeeds",
+          type: "then",
+          execute: () => undefined,
+        },
+        {
+          id: "given-expired-card",
+          name: "customer has an expired card",
+          type: "given",
+          execute: (context) => {
+            context.value = 2;
+          },
+        },
+        {
+          id: "then-failure",
+          name: "payment is declined",
+          type: "then",
+          execute: () => {
+            throw new Error("card declined");
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(subject);
+    htmlReporter.recordScenario(subject, result);
+    const report = await htmlReporter.flush();
+    const html = await readFile(htmlPath, "utf8");
+
+    expect(html).toContain("Checkout flows");
+    expect(html).toContain('class="sub-scenarios"');
+    expect(html).toContain("AC-001-01");
+    expect(html).toContain("AC-001-02");
     expect(html).toBe(formatExecutionRunReportAsHtml(report));
   });
 

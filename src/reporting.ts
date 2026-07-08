@@ -528,6 +528,21 @@ export function createHtmlReporter<TContext extends object>(
   };
 }
 
+function formatScenarioSteps(steps: ReadonlyArray<StepReport>, indent: string): string {
+  const lines: Array<string> = [];
+
+  for (const step of steps) {
+    const status = step.status === "passed" ? "✓" : step.status === "skipped" ? "○" : "✗";
+    lines.push(`${indent}${status} ${step.type} ${step.name}`);
+
+    if (step.error) {
+      lines.push(`${indent}  ↳ ${step.error}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 export function formatStoryReport(report: StoryReport): string {
   const lines = ["Story", `  ${report.title}`, ""];
 
@@ -535,26 +550,15 @@ export function formatStoryReport(report: StoryReport): string {
     lines.push("  Scenario");
     lines.push(`    ${scenario.title}`);
 
-    for (const step of scenario.steps) {
-      const status = step.status === "passed" ? "✓" : step.status === "skipped" ? "○" : "✗";
-      lines.push(`      ${status} ${step.type} ${step.name}`);
+    if (scenario.subScenarios && scenario.subScenarios.length > 0) {
+      lines.push("    Sub-scenarios");
 
-      if (step.error) {
-        lines.push(`        ↳ ${step.error}`);
+      for (const subScenario of scenario.subScenarios) {
+        lines.push(`      ${subScenario.acceptance.join(", ")}`);
+        lines.push(formatScenarioSteps(subScenario.steps, "        "));
       }
-    }
-
-    for (const subScenario of scenario.subScenarios ?? []) {
-      lines.push(`    Sub-scenario ${subScenario.acceptance.join(", ")}`);
-
-      for (const step of subScenario.steps) {
-        const status = step.status === "passed" ? "✓" : step.status === "skipped" ? "○" : "✗";
-        lines.push(`        ${status} ${step.type} ${step.name}`);
-
-        if (step.error) {
-          lines.push(`          ↳ ${step.error}`);
-        }
-      }
+    } else {
+      lines.push(formatScenarioSteps(scenario.steps, "      "));
     }
 
     lines.push("");
@@ -620,22 +624,28 @@ function renderStepsHtml(steps: ReadonlyArray<StepReport>): string {
 
 function renderSubScenarioHtml(subScenario: ScenarioReport): string {
   return `
-      <article class="sub-scenario sub-scenario-${subScenario.status}">
-        <h4>${escapeHtml(subScenario.acceptance.join(", "))}</h4>
-        <ul class="steps">${renderStepsHtml(subScenario.steps)}
-        </ul>
-      </article>`;
+        <article class="sub-scenario sub-scenario-${subScenario.status}">
+          <h4>${escapeHtml(subScenario.acceptance.join(", "))}</h4>
+          <ul class="steps">${renderStepsHtml(subScenario.steps)}
+          </ul>
+        </article>`;
 }
 
 function renderScenarioHtml(scenario: ScenarioReport): string {
-  const stepsHtml = renderStepsHtml(scenario.steps);
-  const subScenariosHtml = (scenario.subScenarios ?? []).map(renderSubScenarioHtml).join("");
+  const hasSubScenarios = scenario.subScenarios && scenario.subScenarios.length > 0;
+  const stepsHtml = hasSubScenarios ? "" : `<ul class="steps">${renderStepsHtml(scenario.steps)}
+      </ul>`;
+  const subScenariosHtml = hasSubScenarios
+    ? `
+      <div class="sub-scenarios">
+        <h4>Sub-scenarios</h4>
+        ${(scenario.subScenarios ?? []).map(renderSubScenarioHtml).join("")}
+      </div>`
+    : "";
 
   return `
     <article class="scenario scenario-${scenario.status}">
-      <h3>${escapeHtml(scenario.title)}</h3>
-      <ul class="steps">${stepsHtml}
-      </ul>${subScenariosHtml}
+      <h3>${escapeHtml(scenario.title)}</h3>${stepsHtml}${subScenariosHtml}
     </article>`;
 }
 
@@ -669,6 +679,10 @@ export function formatExecutionRunReportAsHtml(report: ExecutionRunReport): stri
     .scenario h3 { margin: 0 0 0.5rem; }
     .scenario-failed h3 { color: #b00020; }
     .scenario-passed h3 { color: #1b5e20; }
+    .sub-scenarios { margin-top: 0.75rem; }
+    .sub-scenarios > h4 { margin: 0 0 0.5rem; font-size: 0.95rem; color: #444; }
+    .sub-scenario { background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
+    .sub-scenario h4 { margin: 0 0 0.5rem; font-size: 0.9rem; color: #555; }
     ul.steps { list-style: none; margin: 0; padding: 0; }
     li.step { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; padding: 0.15rem 0; }
     li.step-passed .icon { color: #1b5e20; }
