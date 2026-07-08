@@ -5,8 +5,14 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
+    "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:acceptance": "vitest run --project acceptance",
     "test:unit": "vitest run --project unit",
