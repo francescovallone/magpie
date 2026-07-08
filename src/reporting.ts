@@ -1,5 +1,5 @@
 import type { Scenario, Story } from "./domain.js";
-import type { ExecutionHooks, ScenarioExecutionResult } from "./engine.js";
+import type { ExecutionHooks, ScenarioExecutionResult, StepExecutionResult } from "./engine.js";
 import { writeJsonReport, writeTextFile, type JsonReportWriteOptions } from "./io.js";
 
 export interface StepReport {
@@ -22,6 +22,8 @@ export interface ScenarioReport {
   readonly status: "passed" | "failed";
   readonly error?: string;
   readonly steps: ReadonlyArray<StepReport>;
+  /** Present when the scenario had more than one "given" step; one report per sub-scenario. */
+  readonly subScenarios?: ReadonlyArray<ScenarioReport>;
 }
 
 export interface StoryReport {
@@ -201,6 +203,34 @@ function createStoryReportsFromScenarioReports(
   return Object.freeze(Array.from(groups.values()));
 }
 
+function toStepReports(steps: ReadonlyArray<StepExecutionResult>): ReadonlyArray<StepReport> {
+  return steps.map((step) => ({
+    ...(step.error ? { error: step.error.message } : {}),
+    id: step.stepId,
+    name: step.stepName,
+    type: step.type,
+    lifecycle: step.lifecycle,
+    duration: step.duration,
+    status: step.status,
+  }));
+}
+
+/**
+ * Resolves the acceptance criteria ids satisfied by a scenario for
+ * traceability purposes. When the scenario has sub-scenarios (more than one
+ * "given" step), the granular sub-scenario ids (e.g. `AC-001-01`) are used
+ * instead of the parent scenario's own acceptance ids.
+ */
+export function resolveAcceptanceIds<TContext extends object>(
+  scenario: Scenario<TContext>,
+): ReadonlyArray<string> {
+  if (scenario.subScenarios && scenario.subScenarios.length > 0) {
+    return scenario.subScenarios.flatMap((subScenario) => subScenario.acceptance);
+  }
+
+  return scenario.acceptance;
+}
+
 export function createScenarioReport<TContext extends object>(
   scenario: Scenario<TContext>,
   result: ScenarioExecutionResult<TContext>,
@@ -212,15 +242,7 @@ export function createScenarioReport<TContext extends object>(
     tags: scenario.tags,
     duration: result.duration,
     status: result.success ? "passed" : "failed",
-    steps: result.steps.map((step) => ({
-      ...(step.error ? { error: step.error.message } : {}),
-      id: step.stepId,
-      name: step.stepName,
-      type: step.type,
-      lifecycle: step.lifecycle,
-      duration: step.duration,
-      status: step.status,
-    })),
+    steps: toStepReports(result.steps),
   };
 
   if (scenario.story?.title !== undefined) {
@@ -229,6 +251,32 @@ export function createScenarioReport<TContext extends object>(
 
   if (result.failure?.error.message !== undefined) {
     Object.assign(report, { error: result.failure.error.message });
+  }
+
+  if (result.subScenarios && result.subScenarios.length > 0) {
+    Object.assign(report, {
+      subScenarios: result.subScenarios.map((subResult) => {
+        const subReport: ScenarioReport = {
+          id: subResult.subScenarioId,
+          title: `${scenario.title} \u2013 ${subResult.subScenarioId}`,
+          acceptance: subResult.acceptance,
+          tags: scenario.tags,
+          duration: subResult.duration,
+          status: subResult.success ? "passed" : "failed",
+          steps: toStepReports(subResult.steps),
+        };
+
+        if (scenario.story?.title !== undefined) {
+          Object.assign(subReport, { story: scenario.story.title });
+        }
+
+        if (subResult.failure?.error.message !== undefined) {
+          Object.assign(subReport, { error: subResult.failure.error.message });
+        }
+
+        return subReport;
+      }),
+    });
   }
 
   return report;
@@ -263,7 +311,9 @@ export function createAcceptanceTraceabilityReport<TContext extends object>(
   scenarios: ReadonlyArray<Scenario<TContext>>,
   expectedAcceptanceIds: ReadonlyArray<string> = [],
 ): AcceptanceTraceabilityReport {
-  const implemented = Array.from(new Set(scenarios.flatMap((scenario) => scenario.acceptance))).sort();
+  const implemented = Array.from(
+    new Set(scenarios.flatMap((scenario) => resolveAcceptanceIds(scenario))),
+  ).sort();
   const missing = expectedAcceptanceIds
     .filter((acceptanceId) => !implemented.includes(acceptanceId))
     .sort();
@@ -292,7 +342,7 @@ export function buildExecutionRunReport<TContext extends object>(
         : {}),
       id: record.scenario.id,
       title: record.scenario.title,
-      acceptance: record.scenario.acceptance,
+      acceptance: resolveAcceptanceIds(record.scenario),
       tags: record.scenario.tags,
     },
     report: createScenarioReport(record.scenario, record.result),
@@ -494,6 +544,19 @@ export function formatStoryReport(report: StoryReport): string {
       }
     }
 
+    for (const subScenario of scenario.subScenarios ?? []) {
+      lines.push(`    Sub-scenario ${subScenario.acceptance.join(", ")}`);
+
+      for (const step of subScenario.steps) {
+        const status = step.status === "passed" ? "✓" : step.status === "skipped" ? "○" : "✗";
+        lines.push(`        ${status} ${step.type} ${step.name}`);
+
+        if (step.error) {
+          lines.push(`          ↳ ${step.error}`);
+        }
+      }
+    }
+
     lines.push("");
   }
 
@@ -538,8 +601,8 @@ function stepStatusIcon(status: StepReport["status"]): string {
   return status === "skipped" ? "○" : "✗";
 }
 
-function renderScenarioHtml(scenario: ScenarioReport): string {
-  const stepsHtml = scenario.steps
+function renderStepsHtml(steps: ReadonlyArray<StepReport>): string {
+  return steps
     .map((step) => {
       const errorHtml = step.error
         ? `<p class="error">↳ ${escapeHtml(step.error)}</p>`
@@ -553,12 +616,26 @@ function renderScenarioHtml(scenario: ScenarioReport): string {
         </li>`;
     })
     .join("");
+}
+
+function renderSubScenarioHtml(subScenario: ScenarioReport): string {
+  return `
+      <article class="sub-scenario sub-scenario-${subScenario.status}">
+        <h4>${escapeHtml(subScenario.acceptance.join(", "))}</h4>
+        <ul class="steps">${renderStepsHtml(subScenario.steps)}
+        </ul>
+      </article>`;
+}
+
+function renderScenarioHtml(scenario: ScenarioReport): string {
+  const stepsHtml = renderStepsHtml(scenario.steps);
+  const subScenariosHtml = (scenario.subScenarios ?? []).map(renderSubScenarioHtml).join("");
 
   return `
     <article class="scenario scenario-${scenario.status}">
       <h3>${escapeHtml(scenario.title)}</h3>
       <ul class="steps">${stepsHtml}
-      </ul>
+      </ul>${subScenariosHtml}
     </article>`;
 }
 

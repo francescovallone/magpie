@@ -8,6 +8,16 @@ import {
   type StepDefinitionInput,
 } from "./domain.js";
 
+export interface GivenOptions {
+  /**
+   * Custom acceptance criteria id for the sub-scenario started by this
+   * "given" step, used instead of the auto-generated `{acceptance}-{index}`
+   * id (e.g. `AC-001-01`). Only relevant when the scenario contains more
+   * than one "given" step.
+   */
+  readonly acceptance?: string;
+}
+
 export interface ScenarioBuilder<TContext extends object> {
   acceptance(...ids: ReadonlyArray<string>): ScenarioBuilder<TContext>;
   dependsOn(...scenarioIds: ReadonlyArray<string>): ScenarioBuilder<TContext>;
@@ -16,7 +26,10 @@ export interface ScenarioBuilder<TContext extends object> {
   metadata(values: Record<string, unknown>): ScenarioBuilder<TContext>;
   step(step: ScenarioStep<TContext> | StepDefinitionInput<TContext>): ScenarioBuilder<TContext>;
   setup(step: Omit<StepDefinitionInput<TContext>, "type">): ScenarioBuilder<TContext>;
-  given(step: Omit<StepDefinitionInput<TContext>, "type">): ScenarioBuilder<TContext>;
+  given(
+    step: Omit<StepDefinitionInput<TContext>, "type">,
+    options?: GivenOptions,
+  ): ScenarioBuilder<TContext>;
   when(step: Omit<StepDefinitionInput<TContext>, "type">): ScenarioBuilder<TContext>;
   then(step: Omit<StepDefinitionInput<TContext>, "type">): ScenarioBuilder<TContext>;
   cleanup(step: Omit<StepDefinitionInput<TContext>, "type" | "lifecycle">): ScenarioBuilder<TContext>;
@@ -89,8 +102,11 @@ export function scenario<TContext extends object = Record<string, unknown>>(
     setup(stepInput) {
       return builder.step(createTypedStep("setup", stepInput));
     },
-    given(stepInput) {
-      return builder.step(createTypedStep("given", stepInput));
+    given(stepInput, options) {
+      const acceptance = options?.acceptance;
+      return builder.step(
+        createTypedStep("given", acceptance !== undefined ? { ...stepInput, acceptance } : stepInput),
+      );
     },
     when(stepInput) {
       return builder.step(createTypedStep("when", stepInput));

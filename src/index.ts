@@ -12,6 +12,7 @@ export {
   type StepTypeRegistry,
   type Story,
   type StoryDefinitionInput,
+  type SubScenario,
 } from "./domain.js";
 export {
   executeScenarios,
@@ -24,8 +25,9 @@ export {
   type ScenarioExecutionResult,
   type SkippedScenarioExecutionResult,
   type StepExecutionResult,
+  type SubScenarioExecutionResult,
 } from "./engine.js";
-export { scenario, defineAcceptanceScenario, type ScenarioBuilder } from "./dsl.js";
+export { scenario, defineAcceptanceScenario, type GivenOptions, type ScenarioBuilder } from "./dsl.js";
 export {
   createGherkinScenarios,
   createGherkinScenariosFromFile,
@@ -64,6 +66,7 @@ export {
   formatExecutionRunReport,
   formatExecutionRunReportAsHtml,
   formatStoryReport,
+  resolveAcceptanceIds,
   writeHtmlReport,
   type AcceptanceTraceabilityReport,
   type AcceptanceReporter,

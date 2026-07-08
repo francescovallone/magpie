@@ -59,6 +59,68 @@ describe("reporter", () => {
     expect(output).toContain("↳ Expected a successful login");
   });
 
+  it("reports sub-scenarios and their granular acceptance ids in traceability", async () => {
+    const reporter = createReporter<{ value?: number }>();
+    const subject = defineAcceptanceScenario<{ value?: number }>({
+      id: "checkout",
+      title: "Checkout flows",
+      acceptance: ["AC-001"],
+      steps: [
+        {
+          id: "given-valid-card",
+          name: "customer has a valid card",
+          type: "given",
+          execute: (context) => {
+            context.value = 1;
+          },
+        },
+        {
+          id: "then-success",
+          name: "payment succeeds",
+          type: "then",
+          execute: () => undefined,
+        },
+        {
+          id: "given-expired-card",
+          name: "customer has an expired card",
+          type: "given",
+          execute: (context) => {
+            context.value = 2;
+          },
+        },
+        {
+          id: "then-failure",
+          name: "payment is declined",
+          type: "then",
+          execute: () => {
+            throw new Error("card declined");
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(subject);
+    reporter.recordScenario(subject, result);
+
+    const report = reporter.buildReport({
+      expectedAcceptanceIds: ["AC-001-01", "AC-001-02", "AC-001-03"],
+      now: () => 0,
+    });
+
+    expect(result.success).toBe(false);
+    expect(report.traceability.implemented).toEqual(["AC-001-01", "AC-001-02"]);
+    expect(report.traceability.missing).toEqual(["AC-001-03"]);
+    expect(report.scenarios[0]?.subScenarios).toHaveLength(2);
+    expect(report.scenarios[0]?.subScenarios?.map((sub) => `${sub.status}:${sub.acceptance.join(",")}`)).toEqual([
+      "passed:AC-001-01",
+      "failed:AC-001-02",
+    ]);
+
+    const output = formatExecutionRunReport(report);
+    expect(output).toContain("Sub-scenario AC-001-01");
+    expect(output).toContain("Sub-scenario AC-001-02");
+  });
+
   it("collects scenario results and builds a run report", async () => {
     const reporter = createReporter<Record<string, unknown>>();
     const scenario = defineAcceptanceScenario<Record<string, unknown>>({

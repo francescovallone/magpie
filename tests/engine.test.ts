@@ -365,6 +365,150 @@ describe("scenario definition", () => {
   });
 });
 
+describe("sub-scenarios", () => {
+  it("does not compute sub-scenarios when there is a single given step", () => {
+    const built = scenario("single-given", "Single given scenario")
+      .acceptance("AC-001")
+      .given({ id: "given-a", name: "a", execute: () => undefined })
+      .when({ id: "when-a", name: "b", execute: () => undefined })
+      .then({ id: "then-a", name: "c", execute: () => undefined })
+      .build();
+
+    expect(built.subScenarios).toBeUndefined();
+  });
+
+  it("auto-generates {acceptance}-{index} ids per given when there is more than one given", () => {
+    const built = scenario("multi-given", "Multiple given scenario")
+      .acceptance("AC-001")
+      .given({ id: "given-a", name: "context A", execute: () => undefined })
+      .when({ id: "when-a", name: "action A", execute: () => undefined })
+      .then({ id: "then-a", name: "assert A", execute: () => undefined })
+      .given({ id: "given-b", name: "context B", execute: () => undefined })
+      .when({ id: "when-b", name: "action B", execute: () => undefined })
+      .then({ id: "then-b", name: "assert B", execute: () => undefined })
+      .build();
+
+    expect(built.subScenarios).toHaveLength(2);
+    expect(built.subScenarios?.map((sub) => sub.id)).toEqual(["multi-given-01", "multi-given-02"]);
+    expect(built.subScenarios?.map((sub) => sub.acceptance)).toEqual([["AC-001-01"], ["AC-001-02"]]);
+    expect(built.subScenarios?.[0]?.steps.map((step) => step.id)).toEqual([
+      "given-a",
+      "when-a",
+      "then-a",
+    ]);
+    expect(built.subScenarios?.[1]?.steps.map((step) => step.id)).toEqual([
+      "given-b",
+      "when-b",
+      "then-b",
+    ]);
+  });
+
+  it("allows a custom acceptance id per given via the given() options", () => {
+    const built = scenario("custom-given", "Custom acceptance ids")
+      .acceptance("AC-001")
+      .given(
+        { id: "given-a", name: "context A", execute: () => undefined },
+        { acceptance: "AC-CUSTOM" },
+      )
+      .given({ id: "given-b", name: "context B", execute: () => undefined })
+      .build();
+
+    expect(built.subScenarios?.map((sub) => sub.id)).toEqual(["AC-CUSTOM", "custom-given-02"]);
+    expect(built.subScenarios?.map((sub) => sub.acceptance)).toEqual([["AC-CUSTOM"], ["AC-001-02"]]);
+  });
+
+  it("shares setup steps across sub-scenarios and executes each independently, failing the parent on any failure", async () => {
+    const contexts: Array<{ value?: number }> = [];
+
+    const built = defineAcceptanceScenario<{ value?: number }>({
+      id: "checkout",
+      title: "Checkout flows",
+      acceptance: ["AC-001"],
+      steps: [
+        {
+          id: "setup-store",
+          name: "store is open",
+          type: "setup",
+          execute: (context) => {
+            context.value = 0;
+          },
+        },
+        {
+          id: "given-valid-card",
+          name: "customer has a valid card",
+          type: "given",
+          execute: (context) => {
+            context.value = 1;
+          },
+        },
+        {
+          id: "when-pay-valid",
+          name: "customer pays",
+          type: "when",
+          execute: (context) => {
+            contexts.push(context);
+          },
+        },
+        {
+          id: "then-success",
+          name: "payment succeeds",
+          type: "then",
+          execute: () => undefined,
+        },
+        {
+          id: "given-expired-card",
+          name: "customer has an expired card",
+          type: "given",
+          execute: (context) => {
+            context.value = 2;
+          },
+        },
+        {
+          id: "when-pay-expired",
+          name: "customer pays",
+          type: "when",
+          execute: (context) => {
+            contexts.push(context);
+          },
+        },
+        {
+          id: "then-failure",
+          name: "payment is declined",
+          type: "then",
+          execute: () => {
+            throw new Error("card declined");
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(built);
+
+    expect(result.success).toBe(false);
+    expect(result.acceptance).toEqual(["AC-001"]);
+    expect(result.subScenarios).toHaveLength(2);
+    expect(result.subScenarios?.map((sub) => `${sub.subScenarioId}:${sub.success}`)).toEqual([
+      "checkout-01:true",
+      "checkout-02:false",
+    ]);
+    expect(result.failure?.step.id).toBe("then-failure");
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0]).not.toBe(contexts[1]);
+    expect(contexts[0]?.value).toBe(1);
+    expect(contexts[1]?.value).toBe(2);
+    expect(result.steps.map((step) => step.stepId)).toEqual([
+      "setup-store",
+      "given-valid-card",
+      "when-pay-valid",
+      "then-success",
+      "setup-store",
+      "given-expired-card",
+      "when-pay-expired",
+      "then-failure",
+    ]);
+  });
+});
+
 describe("reporting and filtering", () => {
   it("creates traceability, text reports, and filter predicates", async () => {
     const scenarioA = defineAcceptanceScenario({

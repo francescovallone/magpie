@@ -6,6 +6,7 @@ import type { ScenarioExecutionResult } from "./engine.js";
 import {
   buildExecutionRunReportFromScenarioReports,
   createScenarioReport,
+  resolveAcceptanceIds,
   type ExecutionRunReport,
   type ReportBuildOptions,
   type ScenarioDescriptor,
@@ -48,7 +49,7 @@ export function createScenarioDescriptor<TContext extends object>(
   const descriptor: ScenarioDescriptor = {
     id: scenario.id,
     title: scenario.title,
-    acceptance: scenario.acceptance,
+    acceptance: resolveAcceptanceIds(scenario),
     tags: scenario.tags,
   };
 

@@ -2,6 +2,7 @@ import type {
   Scenario,
   ScenarioStep,
   StepExecutionApi,
+  SubScenario,
 } from "./domain.js";
 
 export interface ExecutionLogEntry {
@@ -36,6 +37,19 @@ export interface ScenarioFailure<TContext extends object> {
   readonly cause: unknown;
 }
 
+export interface SubScenarioExecutionResult<TContext extends object> {
+  readonly subScenarioId: string;
+  readonly acceptance: ReadonlyArray<string>;
+  readonly success: boolean;
+  readonly duration: number;
+  readonly startedAt: number;
+  readonly finishedAt: number;
+  readonly context: TContext;
+  readonly logs: ReadonlyArray<ExecutionLogEntry>;
+  readonly steps: ReadonlyArray<StepExecutionResult>;
+  readonly failure?: ScenarioFailure<TContext>;
+}
+
 export interface ScenarioExecutionResult<TContext extends object> {
   readonly scenarioId: string;
   readonly scenarioTitle: string;
@@ -48,6 +62,12 @@ export interface ScenarioExecutionResult<TContext extends object> {
   readonly logs: ReadonlyArray<ExecutionLogEntry>;
   readonly steps: ReadonlyArray<StepExecutionResult>;
   readonly failure?: ScenarioFailure<TContext>;
+  /**
+   * Present when the scenario has more than one "given" step. Each entry is
+   * the independent result of executing one sub-scenario. If any
+   * sub-scenario fails, the parent scenario's `success` is `false` too.
+   */
+  readonly subScenarios?: ReadonlyArray<SubScenarioExecutionResult<TContext>>;
 }
 
 export interface SkippedScenarioExecutionResult {
@@ -441,10 +461,98 @@ export async function executeScenarios<TContext extends object>(
   };
 }
 
+function createSyntheticSubScenario<TContext extends object>(
+  scenario: Scenario<TContext>,
+  subScenario: SubScenario<TContext>,
+  cleanupSteps: ReadonlyArray<ScenarioStep<TContext>>,
+): Scenario<TContext> {
+  const synthetic: Scenario<TContext> = {
+    id: subScenario.id,
+    title: `${scenario.title} \u2013 ${subScenario.id}`,
+    acceptance: subScenario.acceptance,
+    tags: scenario.tags,
+    metadata: scenario.metadata,
+    steps: Object.freeze([...subScenario.steps, ...cleanupSteps]),
+  };
+
+  if (scenario.description !== undefined) {
+    Object.assign(synthetic, { description: scenario.description });
+  }
+
+  if (scenario.story !== undefined) {
+    Object.assign(synthetic, { story: scenario.story });
+  }
+
+  return synthetic;
+}
+
+async function executeScenarioWithSubScenarios<TContext extends object>(
+  scenario: Scenario<TContext>,
+  subScenarios: ReadonlyArray<SubScenario<TContext>>,
+  options: ExecuteScenarioOptions<TContext>,
+): Promise<ScenarioExecutionResult<TContext>> {
+  const now = options.now ?? (() => Date.now());
+  const startedAt = now();
+  const { cleanupSteps } = partitionSteps(scenario);
+
+  const subResults: Array<SubScenarioExecutionResult<TContext>> = [];
+  const aggregatedLogs: Array<ExecutionLogEntry> = [];
+  const aggregatedSteps: Array<StepExecutionResult> = [];
+  let failure: ScenarioFailure<TContext> | undefined;
+  let lastContext: TContext | undefined;
+
+  for (const subScenario of subScenarios) {
+    const syntheticScenario = createSyntheticSubScenario(scenario, subScenario, cleanupSteps);
+    const subResult = await executeScenario(syntheticScenario, options);
+
+    lastContext = subResult.context;
+    aggregatedLogs.push(...subResult.logs);
+    aggregatedSteps.push(...subResult.steps);
+
+    if (!failure && subResult.failure) {
+      failure = subResult.failure;
+    }
+
+    subResults.push({
+      subScenarioId: subScenario.id,
+      acceptance: subScenario.acceptance,
+      success: subResult.success,
+      duration: subResult.duration,
+      startedAt: subResult.startedAt,
+      finishedAt: subResult.finishedAt,
+      context: subResult.context,
+      logs: subResult.logs,
+      steps: subResult.steps,
+      ...(subResult.failure ? { failure: subResult.failure } : {}),
+    });
+  }
+
+  const finishedAt = now();
+  const resultBase = {
+    scenarioId: scenario.id,
+    scenarioTitle: scenario.title,
+    acceptance: scenario.acceptance,
+    success: subResults.every((subResult) => subResult.success),
+    duration: finishedAt - startedAt,
+    startedAt,
+    finishedAt,
+    context: lastContext ?? createContext(options),
+    logs: Object.freeze(aggregatedLogs),
+    steps: Object.freeze(aggregatedSteps),
+    subScenarios: Object.freeze(subResults),
+  };
+
+  return failure ? { ...resultBase, failure } : resultBase;
+}
+
 export async function executeScenario<TContext extends object>(
   scenario: Scenario<TContext>,
   options: ExecuteScenarioOptions<TContext> = {},
 ): Promise<ScenarioExecutionResult<TContext>> {
+  if (scenario.subScenarios && scenario.subScenarios.length > 0) {
+    return executeScenarioWithSubScenarios(scenario, scenario.subScenarios, options);
+  }
+
   const now = options.now ?? (() => Date.now());
   const startedAt = now();
   const logs: Array<ExecutionLogEntry> = [];

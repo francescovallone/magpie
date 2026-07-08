@@ -105,6 +105,48 @@ const loginScenario = scenario<{ response?: { status: number; token?: string } }
   .build();
 ```
 
+## Sub-scenarios
+
+A scenario with more than one `given` step is automatically split into
+independent sub-scenarios: each `given` starts a new sub-scenario made up of
+that `given` and every step up to (but excluding) the next `given` step, plus
+any steps that come before the first `given` (e.g. `setup`). Sub-scenarios run
+independently (each gets its own fresh context and result), but if any
+sub-scenario fails, the parent scenario is reported as failed too.
+
+Each sub-scenario is assigned an acceptance criteria id automatically by
+appending a two-digit index to the scenario's own acceptance ids, e.g.
+`AC-001` becomes `AC-001-01`, `AC-001-02`, etc. You can override this with a
+custom id via the second argument to `given()`:
+
+```ts
+const checkoutScenario = scenario<{ status?: number }>("checkout", "Checkout flows")
+  .acceptance("AC-001")
+  .given({
+    id: "given-valid-card",
+    name: "customer has a valid card",
+    execute: () => undefined,
+  }) // -> AC-001-01
+  .when({ id: "when-pay", name: "customer pays", execute: () => undefined })
+  .then({ id: "then-success", name: "payment succeeds", execute: () => undefined })
+  .given(
+    {
+      id: "given-expired-card",
+      name: "customer has an expired card",
+      execute: () => undefined,
+    },
+    { acceptance: "AC-001-EXPIRED" }, // custom id instead of AC-001-02
+  )
+  .when({ id: "when-pay-2", name: "customer pays", execute: () => undefined })
+  .then({ id: "then-decline", name: "payment is declined", execute: () => undefined })
+  .build();
+```
+
+`ScenarioExecutionResult.subScenarios` and `ScenarioReport.subScenarios` expose
+the per-sub-scenario results, and acceptance traceability reports
+(`createAcceptanceTraceabilityReport`, `buildExecutionRunReport`) use the
+granular sub-scenario ids instead of the parent scenario's ids when present.
+
 ## Running through Vitest
 
 Use the Vitest adapter to map scenario data into `describe()` and `it()`.

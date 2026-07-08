@@ -34,6 +34,26 @@ export interface ScenarioStep<TContext extends object = Record<string, unknown>>
   readonly lifecycle: StepLifecycle;
   readonly metadata: Metadata;
   readonly execute: StepExecutor<TContext>;
+  /**
+   * Custom acceptance criteria id for the sub-scenario started by this step.
+   * Only meaningful on "given" steps; ignored otherwise. When omitted, a
+   * sub-scenario id is auto-generated (see `defineScenario`).
+   */
+  readonly acceptance?: AcceptanceReference;
+}
+
+/**
+ * A scenario is split into sub-scenarios whenever it contains more than one
+ * "given" step. Each sub-scenario starts at a "given" step and includes every
+ * following step up to (but excluding) the next "given" step, plus any steps
+ * that appear before the first "given" (e.g. "setup" steps). Sub-scenarios
+ * are executed independently, but a failing sub-scenario fails the parent
+ * scenario as a whole.
+ */
+export interface SubScenario<TContext extends object = Record<string, unknown>> {
+  readonly id: string;
+  readonly acceptance: ReadonlyArray<AcceptanceReference>;
+  readonly steps: ReadonlyArray<ScenarioStep<TContext>>;
 }
 
 export interface StoryReference {
@@ -52,6 +72,11 @@ export interface Scenario<TContext extends object = Record<string, unknown>> {
   readonly metadata: Metadata;
   readonly steps: ReadonlyArray<ScenarioStep<TContext>>;
   readonly story?: StoryReference;
+  /**
+   * Present when the scenario contains more than one "given" step. See
+   * `SubScenario` for details on how steps are grouped.
+   */
+  readonly subScenarios?: ReadonlyArray<SubScenario<TContext>>;
 }
 
 export interface Story<TContext extends object = Record<string, unknown>> {
@@ -69,6 +94,8 @@ export interface StepDefinitionInput<TContext extends object> {
   readonly execute: StepExecutor<TContext>;
   readonly lifecycle?: StepLifecycle;
   readonly metadata?: Record<string, unknown>;
+  /** Custom acceptance criteria id for the sub-scenario started by this step (see `ScenarioStep.acceptance`). */
+  readonly acceptance?: AcceptanceReference;
 }
 
 export interface ScenarioDefinitionInput<TContext extends object> {
@@ -167,7 +194,62 @@ export function defineStep<TContext extends object>(
     lifecycle: input.lifecycle ?? "main",
     metadata: cloneMetadata(input.metadata),
     execute: input.execute,
+    ...(input.acceptance !== undefined ? { acceptance: input.acceptance } : {}),
   });
+}
+
+function padSubScenarioIndex(index: number): string {
+  return String(index).padStart(2, "0");
+}
+
+/**
+ * Splits a scenario's main (non-cleanup) steps into sub-scenarios whenever
+ * more than one "given" step is present. Returns `undefined` when the
+ * scenario has zero or one "given" steps (i.e. sub-scenarios are disabled).
+ */
+function buildSubScenarios<TContext extends object>(
+  scenarioId: string,
+  scenarioAcceptance: ReadonlyArray<AcceptanceReference>,
+  steps: ReadonlyArray<ScenarioStep<TContext>>,
+): ReadonlyArray<SubScenario<TContext>> | undefined {
+  const mainSteps = steps.filter((step) => step.lifecycle !== "cleanup");
+  const givenIndexes = mainSteps.reduce<Array<number>>((indexes, step, index) => {
+    if (step.type === "given") {
+      indexes.push(index);
+    }
+
+    return indexes;
+  }, []);
+
+  if (givenIndexes.length <= 1) {
+    return undefined;
+  }
+
+  const prefixSteps = mainSteps.slice(0, givenIndexes[0]!);
+
+  return Object.freeze(
+    givenIndexes.map((startIndex, order) => {
+      const endIndex = givenIndexes[order + 1] ?? mainSteps.length;
+      const segmentSteps = mainSteps.slice(startIndex, endIndex);
+      const givenStep = mainSteps[startIndex]!;
+      const suffix = padSubScenarioIndex(order + 1);
+      const customAcceptance = givenStep.acceptance;
+
+      const acceptance = customAcceptance
+        ? Object.freeze([customAcceptance])
+        : Object.freeze(
+            scenarioAcceptance.length > 0
+              ? scenarioAcceptance.map((id) => `${id}-${suffix}`)
+              : [`${scenarioId}-${suffix}`],
+          );
+
+      return deepFreeze({
+        id: customAcceptance ?? `${scenarioId}-${suffix}`,
+        acceptance,
+        steps: Object.freeze([...prefixSteps, ...segmentSteps]),
+      });
+    }),
+  );
 }
 
 export function defineScenario<TContext extends object>(
@@ -177,10 +259,12 @@ export function defineScenario<TContext extends object>(
     input.steps.map((step) => (isScenarioStep(step) ? step : defineStep(step))),
   );
 
+  const acceptance = Object.freeze([...(input.acceptance ?? [])]);
+
   const scenario: Scenario<TContext> = {
     id: input.id,
     title: input.title,
-    acceptance: Object.freeze([...(input.acceptance ?? [])]),
+    acceptance,
     tags: Object.freeze([...(input.tags ?? [])]),
     metadata: cloneMetadata(input.metadata),
     steps,
@@ -196,6 +280,12 @@ export function defineScenario<TContext extends object>(
 
   if (input.story) {
     Object.assign(scenario, { story: deepFreeze({ ...input.story }) });
+  }
+
+  const subScenarios = buildSubScenarios(input.id, acceptance, steps);
+
+  if (subScenarios !== undefined) {
+    Object.assign(scenario, { subScenarios });
   }
 
   return deepFreeze(scenario);
