@@ -59,6 +59,214 @@ describe("reporter", () => {
     expect(output).toContain("↳ Expected a successful login");
   });
 
+  it("reports only the first line of an error message by default", async () => {
+    const reporter = createReporter<Record<string, unknown>>();
+    const scenario = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "multi-line-error",
+      title: "Failure with a multi-line error",
+      acceptance: ["ERR-001"],
+      steps: [
+        {
+          id: "then-fails",
+          name: "step fails verbosely",
+          type: "then",
+          execute: () => {
+            throw new Error("Expected 200\nReceived 500\nat request pipeline");
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(scenario);
+    reporter.recordScenario(scenario, result);
+
+    const report = reporter.buildReport({ now: () => 0 });
+
+    expect(report.scenarios[0]?.error).toBe("Expected 200");
+    expect(report.scenarios[0]?.steps.at(-1)?.error).toBe("Expected 200");
+  });
+
+  it("reports the full error when errors.verbose is enabled", async () => {
+    const reporter = createReporter<Record<string, unknown>>();
+    const scenario = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "verbose-error",
+      title: "Failure reported verbosely",
+      acceptance: ["ERR-002"],
+      steps: [
+        {
+          id: "then-fails",
+          name: "step fails verbosely",
+          type: "then",
+          execute: () => {
+            throw new Error("Expected 200\nReceived 500");
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(scenario);
+    reporter.recordScenario(scenario, result);
+
+    const report = reporter.buildReport({ errors: { verbose: true }, now: () => 0 });
+    const scenarioError = report.scenarios[0]?.error ?? "";
+
+    expect(scenarioError).toContain("Expected 200");
+    expect(scenarioError).toContain("Received 500");
+    // The stack trace is included when available.
+    expect(scenarioError).toContain("at ");
+    expect(report.scenarios[0]?.steps.at(-1)?.error).toBe(scenarioError);
+  });
+
+  it("includes step and scenario logs only when logs.enabled is set", async () => {
+    const reporter = createReporter<Record<string, unknown>>();
+    const scenario = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "logged",
+      title: "Scenario with logs",
+      acceptance: ["LOG-001"],
+      steps: [
+        {
+          id: "when-logs",
+          name: "step emits logs",
+          type: "when",
+          execute: (_context, api) => {
+            api.log("fetching token", { url: "https://example.test" });
+            api.log("token received");
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(scenario);
+    reporter.recordScenario(scenario, result);
+
+    const defaultReport = reporter.buildReport({ now: () => 0 });
+    expect(defaultReport.scenarios[0]?.logs).toBeUndefined();
+    expect(defaultReport.scenarios[0]?.steps[0]?.logs).toBeUndefined();
+
+    const verboseReport = reporter.buildReport({ logs: { enabled: true }, now: () => 0 });
+    const stepLogs = verboseReport.scenarios[0]?.steps[0]?.logs;
+
+    expect(stepLogs?.map((entry) => entry.message)).toEqual(["fetching token", "token received"]);
+    expect(stepLogs?.[0]?.data).toEqual({ url: "https://example.test" });
+    // Scenario-level logs hold engine lifecycle entries (no stepId), not step logs.
+    expect(verboseReport.scenarios[0]?.logs?.map((entry) => entry.message)).toEqual([
+      "scenario.started",
+      "scenario.finished",
+    ]);
+
+    const output = formatExecutionRunReport(verboseReport);
+    expect(output).toContain('· fetching token {"url":"https://example.test"}');
+    expect(output).toContain("· token received");
+
+    const html = formatExecutionRunReportAsHtml(verboseReport);
+    expect(html).toContain("fetching token");
+  });
+
+  it("marks quarantined scenarios and excludes them from pass/fail totals", async () => {
+    const reporter = createReporter<Record<string, unknown>>();
+    const quarantined = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "flaky-checkout",
+      title: "Flaky checkout",
+      acceptance: ["Q-001"],
+      tags: ["quarantine"],
+      steps: [
+        {
+          id: "then-fails",
+          name: "fails for now",
+          type: "then",
+          execute: () => {
+            throw new Error("known flake");
+          },
+        },
+      ],
+    });
+    const healthy = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "healthy",
+      title: "Healthy scenario",
+      acceptance: ["Q-002"],
+      steps: [{ id: "then-passes", name: "passes", type: "then", execute: () => undefined }],
+    });
+
+    reporter.recordScenario(quarantined, await executeScenario(quarantined));
+    reporter.recordScenario(healthy, await executeScenario(healthy));
+
+    const report = reporter.buildReport({ now: () => 0 });
+
+    expect(report.scenarios[0]?.quarantined).toBe(true);
+    expect(report.scenarios[0]?.status).toBe("failed");
+    expect(report.scenarios[1]?.quarantined).toBeUndefined();
+    expect(report.totals.scenarioCount).toBe(2);
+    expect(report.totals.passedScenarioCount).toBe(1);
+    expect(report.totals.failedScenarioCount).toBe(0);
+    expect(report.totals.quarantinedScenarioCount).toBe(1);
+
+    const output = formatExecutionRunReport(report);
+    expect(output).toContain("Quarantined: 1");
+    expect(output).toContain("Flaky checkout [quarantined]");
+  });
+
+  it("honors custom quarantine tags", async () => {
+    const reporter = createReporter<Record<string, unknown>>();
+    const scenario = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "custom-tag",
+      title: "Custom quarantine tag",
+      tags: ["known-flaky"],
+      steps: [
+        {
+          id: "then-fails",
+          name: "fails",
+          type: "then",
+          execute: () => {
+            throw new Error("flake");
+          },
+        },
+      ],
+    });
+
+    reporter.recordScenario(scenario, await executeScenario(scenario));
+
+    const defaultReport = reporter.buildReport({ now: () => 0 });
+    expect(defaultReport.scenarios[0]?.quarantined).toBeUndefined();
+    expect(defaultReport.totals.failedScenarioCount).toBe(1);
+
+    const customReport = reporter.buildReport({ quarantineTags: ["known-flaky"], now: () => 0 });
+    expect(customReport.scenarios[0]?.quarantined).toBe(true);
+    expect(customReport.totals.failedScenarioCount).toBe(0);
+    expect(customReport.totals.quarantinedScenarioCount).toBe(1);
+  });
+
+  it("reports the attempt count for retried scenarios", async () => {
+    const reporter = createReporter<Record<string, unknown>>();
+    let executions = 0;
+    const scenario = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "retried",
+      title: "Retried scenario",
+      retries: 1,
+      steps: [
+        {
+          id: "then-flaky",
+          name: "passes on retry",
+          type: "then",
+          execute: () => {
+            executions += 1;
+            if (executions === 1) {
+              throw new Error("first attempt fails");
+            }
+          },
+        },
+      ],
+    });
+
+    reporter.recordScenario(scenario, await executeScenario(scenario));
+
+    const report = reporter.buildReport({ now: () => 0 });
+    expect(report.scenarios[0]?.status).toBe("passed");
+    expect(report.scenarios[0]?.attempts).toBe(2);
+
+    const output = formatExecutionRunReport(report);
+    expect(output).toContain("Retried scenario [attempts: 2]");
+  });
+
   it("reports sub-scenarios and their granular acceptance ids in traceability", async () => {
     const reporter = createReporter<{ value?: number }>();
     const subject = defineAcceptanceScenario<{ value?: number }>({

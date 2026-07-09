@@ -1,6 +1,21 @@
 import type { Scenario, Story } from "./domain.js";
-import type { ExecutionHooks, ScenarioExecutionResult, StepExecutionResult } from "./engine.js";
+import type {
+  ExecutionHooks,
+  ExecutionLogEntry,
+  ScenarioExecutionResult,
+  SerializedError,
+  StepExecutionResult,
+} from "./engine.js";
 import { writeJsonReport, writeTextFile, type JsonReportWriteOptions } from "./io.js";
+
+/** Tags that mark a scenario as quarantined when no custom tags are configured. */
+export const DEFAULT_QUARANTINE_TAGS: ReadonlyArray<string> = Object.freeze(["quarantine"]);
+
+export interface ReportLogEntry {
+  readonly timestamp: number;
+  readonly message: string;
+  readonly data?: unknown;
+}
 
 export interface StepReport {
   readonly id: string;
@@ -10,6 +25,8 @@ export interface StepReport {
   readonly duration: number;
   readonly status: "passed" | "failed" | "skipped";
   readonly error?: string;
+  /** Present when log reporting is enabled and the step emitted logs via `api.log`. */
+  readonly logs?: ReadonlyArray<ReportLogEntry>;
 }
 
 export interface ScenarioReport {
@@ -22,6 +39,12 @@ export interface ScenarioReport {
   readonly status: "passed" | "failed";
   readonly error?: string;
   readonly steps: ReadonlyArray<StepReport>;
+  /** Present when log reporting is enabled; scenario-level entries only (step logs live on each step). */
+  readonly logs?: ReadonlyArray<ReportLogEntry>;
+  /** Present when the scenario was retried; total number of attempts executed. */
+  readonly attempts?: number;
+  /** Present when the scenario carries a quarantine tag; quarantined failures do not fail the run. */
+  readonly quarantined?: boolean;
   /** Present when the scenario had more than one "given" step; one report per sub-scenario. */
   readonly subScenarios?: ReadonlyArray<ScenarioReport>;
 }
@@ -65,6 +88,11 @@ export interface ExecutionRunTotals {
   readonly scenarioCount: number;
   readonly passedScenarioCount: number;
   readonly failedScenarioCount: number;
+  /**
+   * Number of quarantined scenarios. Quarantined scenarios are excluded from
+   * both `passedScenarioCount` and `failedScenarioCount`.
+   */
+  readonly quarantinedScenarioCount: number;
   readonly stepCount: number;
   readonly passedStepCount: number;
   readonly failedStepCount: number;
@@ -80,7 +108,36 @@ export interface ExecutionRunReport {
   readonly traceability: AcceptanceTraceabilityReport;
 }
 
-export interface ReportBuildOptions<TContext extends object> {
+export interface ErrorReportingOptions {
+  /**
+   * When `true`, reports include the full error (stack trace when
+   * available). By default only the first line of the error message is
+   * reported.
+   */
+  readonly verbose?: boolean;
+}
+
+export interface LogReportingOptions {
+  /**
+   * When `true`, reports include the logs captured during execution: step
+   * logs emitted via `api.log` on each step report, and scenario-level
+   * entries on the scenario report. Disabled by default.
+   */
+  readonly enabled?: boolean;
+}
+
+/** Options that influence how a single scenario report is built. */
+export interface ScenarioReportOptions {
+  readonly errors?: ErrorReportingOptions;
+  readonly logs?: LogReportingOptions;
+  /**
+   * Tags that mark a scenario as quarantined. Defaults to
+   * `DEFAULT_QUARANTINE_TAGS` (`["quarantine"]`).
+   */
+  readonly quarantineTags?: ReadonlyArray<string>;
+}
+
+export interface ReportBuildOptions<TContext extends object> extends ScenarioReportOptions {
   readonly stories?: ReadonlyArray<Story<TContext>>;
   readonly expectedAcceptanceIds?: ReadonlyArray<string>;
   readonly now?: () => number;
@@ -155,13 +212,19 @@ function createTotals(scenarios: ReadonlyArray<ScenarioReport>): ExecutionRunTot
     0,
   );
   const duration = scenarios.reduce((total, scenario) => total + scenario.duration, 0);
-  const passedScenarioCount = scenarios.filter((scenario) => scenario.status === "passed").length;
-  const failedScenarioCount = scenarios.length - passedScenarioCount;
+  const quarantinedScenarioCount = scenarios.filter((scenario) => scenario.quarantined).length;
+  const passedScenarioCount = scenarios.filter(
+    (scenario) => scenario.status === "passed" && !scenario.quarantined,
+  ).length;
+  const failedScenarioCount = scenarios.filter(
+    (scenario) => scenario.status === "failed" && !scenario.quarantined,
+  ).length;
 
   return {
     scenarioCount: scenarios.length,
     passedScenarioCount,
     failedScenarioCount,
+    quarantinedScenarioCount,
     stepCount,
     passedStepCount,
     failedStepCount,
@@ -203,9 +266,40 @@ function createStoryReportsFromScenarioReports(
   return Object.freeze(Array.from(groups.values()));
 }
 
-function toStepReports(steps: ReadonlyArray<StepExecutionResult>): ReadonlyArray<StepReport> {
+function formatReportError(error: SerializedError, options?: ErrorReportingOptions): string {
+  if (options?.verbose) {
+    return error.stack ?? error.message;
+  }
+
+  return error.message.split("\n", 1)[0] ?? error.message;
+}
+
+function toReportLogEntries(
+  logs: ReadonlyArray<ExecutionLogEntry>,
+): ReadonlyArray<ReportLogEntry> {
+  return logs.map((entry) => ({
+    timestamp: entry.timestamp,
+    message: entry.message,
+    ...(entry.data !== undefined ? { data: entry.data } : {}),
+  }));
+}
+
+function isQuarantined(
+  tags: ReadonlyArray<string>,
+  quarantineTags: ReadonlyArray<string> = DEFAULT_QUARANTINE_TAGS,
+): boolean {
+  return tags.some((tag) => quarantineTags.includes(tag));
+}
+
+function toStepReports(
+  steps: ReadonlyArray<StepExecutionResult>,
+  options?: ScenarioReportOptions,
+): ReadonlyArray<StepReport> {
   return steps.map((step) => ({
-    ...(step.error ? { error: step.error.message } : {}),
+    ...(step.error ? { error: formatReportError(step.error, options?.errors) } : {}),
+    ...(options?.logs?.enabled && step.logs.length > 0
+      ? { logs: toReportLogEntries(step.logs) }
+      : {}),
     id: step.stepId,
     name: step.stepName,
     type: step.type,
@@ -234,6 +328,7 @@ export function resolveAcceptanceIds<TContext extends object>(
 export function createScenarioReport<TContext extends object>(
   scenario: Scenario<TContext>,
   result: ScenarioExecutionResult<TContext>,
+  options?: ScenarioReportOptions,
 ): ScenarioReport {
   const report: ScenarioReport = {
     id: scenario.id,
@@ -242,15 +337,31 @@ export function createScenarioReport<TContext extends object>(
     tags: scenario.tags,
     duration: result.duration,
     status: result.success ? "passed" : "failed",
-    steps: toStepReports(result.steps),
+    steps: toStepReports(result.steps, options),
   };
 
   if (scenario.story?.title !== undefined) {
     Object.assign(report, { story: scenario.story.title });
   }
 
-  if (result.failure?.error.message !== undefined) {
-    Object.assign(report, { error: result.failure.error.message });
+  if (result.failure !== undefined) {
+    Object.assign(report, { error: formatReportError(result.failure.error, options?.errors) });
+  }
+
+  if (options?.logs?.enabled) {
+    const scenarioLogs = result.logs.filter((entry) => entry.stepId === undefined);
+
+    if (scenarioLogs.length > 0) {
+      Object.assign(report, { logs: toReportLogEntries(scenarioLogs) });
+    }
+  }
+
+  if (result.attempts !== undefined) {
+    Object.assign(report, { attempts: result.attempts });
+  }
+
+  if (isQuarantined(scenario.tags, options?.quarantineTags)) {
+    Object.assign(report, { quarantined: true });
   }
 
   if (result.subScenarios && result.subScenarios.length > 0) {
@@ -263,15 +374,21 @@ export function createScenarioReport<TContext extends object>(
           tags: scenario.tags,
           duration: subResult.duration,
           status: subResult.success ? "passed" : "failed",
-          steps: toStepReports(subResult.steps),
+          steps: toStepReports(subResult.steps, options),
         };
 
         if (scenario.story?.title !== undefined) {
           Object.assign(subReport, { story: scenario.story.title });
         }
 
-        if (subResult.failure?.error.message !== undefined) {
-          Object.assign(subReport, { error: subResult.failure.error.message });
+        if (subResult.failure !== undefined) {
+          Object.assign(subReport, {
+            error: formatReportError(subResult.failure.error, options?.errors),
+          });
+        }
+
+        if (subResult.attempts !== undefined) {
+          Object.assign(subReport, { attempts: subResult.attempts });
         }
 
         return subReport;
@@ -285,6 +402,7 @@ export function createScenarioReport<TContext extends object>(
 export function createStoryReport<TContext extends object>(
   story: Story<TContext>,
   results: ReadonlyArray<ScenarioExecutionResult<TContext>>,
+  options?: ScenarioReportOptions,
 ): StoryReport {
   const byId = new Map(results.map((result) => [result.scenarioId, result]));
 
@@ -292,7 +410,7 @@ export function createStoryReport<TContext extends object>(
     title: story.title,
     scenarios: story.scenarios.flatMap((scenario) => {
       const result = byId.get(scenario.id);
-      return result ? [createScenarioReport(scenario, result)] : [];
+      return result ? [createScenarioReport(scenario, result, options)] : [];
     }),
   };
 
@@ -345,7 +463,7 @@ export function buildExecutionRunReport<TContext extends object>(
       acceptance: resolveAcceptanceIds(record.scenario),
       tags: record.scenario.tags,
     },
-    report: createScenarioReport(record.scenario, record.result),
+    report: createScenarioReport(record.scenario, record.result, options),
   }));
 
   const normalizedOptions: ReportBuildOptions<Record<string, unknown>> = { now };
@@ -368,7 +486,17 @@ export function buildExecutionRunReportFromScenarioReports(
   options: ReportBuildOptions<Record<string, unknown>> = {},
 ): ExecutionRunReport {
   const now = options.now ?? (() => Date.now());
-  const scenarios = Object.freeze(records.map((record) => record.report));
+  const scenarios = Object.freeze(
+    records.map((record) => {
+      const report = record.report;
+
+      if (report.quarantined === undefined && isQuarantined(report.tags, options.quarantineTags)) {
+        return { ...report, quarantined: true };
+      }
+
+      return report;
+    }),
+  );
   const stories = options.stories
     ? Object.freeze(
         options.stories.map((story) => ({
@@ -528,6 +656,14 @@ export function createHtmlReporter<TContext extends object>(
   };
 }
 
+function formatLogData(data: unknown): string {
+  try {
+    return JSON.stringify(data) ?? String(data);
+  } catch {
+    return String(data);
+  }
+}
+
 function formatScenarioSteps(steps: ReadonlyArray<StepReport>, indent: string): string {
   const lines: Array<string> = [];
 
@@ -538,9 +674,28 @@ function formatScenarioSteps(steps: ReadonlyArray<StepReport>, indent: string): 
     if (step.error) {
       lines.push(`${indent}  ↳ ${step.error}`);
     }
+
+    for (const entry of step.logs ?? []) {
+      const data = entry.data !== undefined ? ` ${formatLogData(entry.data)}` : "";
+      lines.push(`${indent}  · ${entry.message}${data}`);
+    }
   }
 
   return lines.join("\n");
+}
+
+function formatScenarioTitleSuffix(scenario: ScenarioReport): string {
+  const parts: Array<string> = [];
+
+  if (scenario.quarantined) {
+    parts.push("quarantined");
+  }
+
+  if (scenario.attempts !== undefined) {
+    parts.push(`attempts: ${scenario.attempts}`);
+  }
+
+  return parts.length > 0 ? ` [${parts.join(", ")}]` : "";
 }
 
 export function formatStoryReport(report: StoryReport): string {
@@ -548,7 +703,7 @@ export function formatStoryReport(report: StoryReport): string {
 
   for (const scenario of report.scenarios) {
     lines.push("  Scenario");
-    lines.push(`    ${scenario.title}`);
+    lines.push(`    ${scenario.title}${formatScenarioTitleSuffix(scenario)}`);
 
     if (scenario.subScenarios && scenario.subScenarios.length > 0) {
       lines.push("    Sub-scenarios");
@@ -571,6 +726,9 @@ export function formatExecutionRunReport(report: ExecutionRunReport): string {
   const lines = [
     "Execution Report",
     `  Scenarios: ${report.totals.passedScenarioCount}/${report.totals.scenarioCount} passed`,
+    ...(report.totals.quarantinedScenarioCount > 0
+      ? [`  Quarantined: ${report.totals.quarantinedScenarioCount}`]
+      : []),
     `  Steps: ${report.totals.passedStepCount}/${report.totals.stepCount} passed`,
     `  Duration: ${report.totals.duration}ms`,
     "",
@@ -611,12 +769,20 @@ function renderStepsHtml(steps: ReadonlyArray<StepReport>): string {
       const errorHtml = step.error
         ? `<p class="error">↳ ${escapeHtml(step.error)}</p>`
         : "";
+      const logsHtml = step.logs?.length
+        ? `<ul class="logs">${step.logs
+            .map((entry) => {
+              const data = entry.data !== undefined ? ` ${formatLogData(entry.data)}` : "";
+              return `<li>${escapeHtml(`${entry.message}${data}`)}</li>`;
+            })
+            .join("")}</ul>`
+        : "";
 
       return `
         <li class="step step-${step.status}">
           <span class="icon">${stepStatusIcon(step.status)}</span>
           <span class="step-label">${escapeHtml(step.type)} ${escapeHtml(step.name)}</span>
-          ${errorHtml}
+          ${errorHtml}${logsHtml}
         </li>`;
     })
     .join("");
@@ -643,9 +809,16 @@ function renderScenarioHtml(scenario: ScenarioReport): string {
       </div>`
     : "";
 
+  const badges = [
+    ...(scenario.quarantined ? [`<span class="badge badge-quarantined">quarantined</span>`] : []),
+    ...(scenario.attempts !== undefined
+      ? [`<span class="badge badge-attempts">attempts: ${scenario.attempts}</span>`]
+      : []),
+  ].join(" ");
+
   return `
-    <article class="scenario scenario-${scenario.status}">
-      <h3>${escapeHtml(scenario.title)}</h3>${stepsHtml}${subScenariosHtml}
+    <article class="scenario scenario-${scenario.status}${scenario.quarantined ? " scenario-quarantined" : ""}">
+      <h3>${escapeHtml(scenario.title)} - ${escapeHtml(scenario.acceptance.join(", "))}${badges ? ` ${badges}` : ""}</h3>${stepsHtml}${subScenariosHtml}
     </article>`;
 }
 
@@ -689,13 +862,24 @@ export function formatExecutionRunReportAsHtml(report: ExecutionRunReport): stri
     li.step-failed .icon { color: #b00020; }
     li.step-skipped .icon { color: #9e9e9e; }
     .error { flex-basis: 100%; margin: 0.1rem 0 0.25rem 1.75rem; color: #b00020; }
+    ul.logs { flex-basis: 100%; list-style: none; margin: 0.1rem 0 0.25rem 1.75rem; padding: 0; color: #666; font-size: 0.85rem; }
+    ul.logs li::before { content: "· "; }
+    .badge { display: inline-block; font-size: 0.7rem; font-weight: 600; border-radius: 999px; padding: 0.1rem 0.5rem; vertical-align: middle; }
+    .badge-quarantined { background: #fff3cd; color: #8a6d00; border: 1px solid #ffe08a; }
+    .badge-attempts { background: #e3f2fd; color: #0d47a1; border: 1px solid #bbdefb; }
+    .scenario-quarantined h3 { color: #8a6d00; }
     .acceptance { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1rem 1.25rem; }
   </style>
 </head>
 <body>
   <h1>Magpie Execution Report</h1>
   <div class="summary">
-    <span>Scenarios: ${report.totals.passedScenarioCount}/${report.totals.scenarioCount} passed</span>
+    <span>Scenarios: ${report.totals.passedScenarioCount}/${report.totals.scenarioCount} passed</span>${
+      report.totals.quarantinedScenarioCount > 0
+        ? `
+    <span>Quarantined: ${report.totals.quarantinedScenarioCount}</span>`
+        : ""
+    }
     <span>Steps: ${report.totals.passedStepCount}/${report.totals.stepCount} passed</span>
     <span>Duration: ${report.totals.duration}ms</span>
   </div>

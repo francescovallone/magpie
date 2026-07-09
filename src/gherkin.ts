@@ -104,6 +104,62 @@ function normalizeTag(tag: string): string {
   return tag.startsWith("@") ? tag.slice(1) : tag;
 }
 
+const COMBINING_DIACRITICS = /[̀-ͯ]/g;
+
+function slugify(value: string): string {
+  const slug = value
+    .normalize("NFKD")
+    .replace(COMBINING_DIACRITICS, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return slug || "scenario";
+}
+
+interface ScenarioIdentity {
+  readonly id: string;
+  readonly title: string;
+}
+
+/**
+ * Derives stable, deterministic scenario ids from the feature and scenario
+ * names instead of the parser's per-run random ids. When several pickles
+ * share the same name (e.g. a Scenario Outline whose title has no
+ * `<placeholder>`, or two scenarios with identical names), every occurrence
+ * is disambiguated with its 1-based position: `feature:scenario:2` /
+ * `Scenario name #2`.
+ */
+function createScenarioIdentities(
+  feature: Feature,
+  pickles: ReadonlyArray<Pickle>,
+): ReadonlyArray<ScenarioIdentity> {
+  const featureSlug = slugify(feature.name);
+  const totals = new Map<string, number>();
+
+  for (const pickle of pickles) {
+    const baseId = `${featureSlug}:${slugify(pickle.name)}`;
+    totals.set(baseId, (totals.get(baseId) ?? 0) + 1);
+  }
+
+  const occurrences = new Map<string, number>();
+
+  return pickles.map((pickle) => {
+    const baseId = `${featureSlug}:${slugify(pickle.name)}`;
+    const occurrence = (occurrences.get(baseId) ?? 0) + 1;
+    occurrences.set(baseId, occurrence);
+
+    if ((totals.get(baseId) ?? 0) <= 1) {
+      return { id: baseId, title: pickle.name };
+    }
+
+    return {
+      id: `${baseId}:${occurrence}`,
+      title: `${pickle.name} #${occurrence}`,
+    };
+  });
+}
+
 function toGlobalRegExp(value: RegExp | string): RegExp {
   if (value instanceof RegExp) {
     const flags = value.flags.includes("g") ? value.flags : `${value.flags}g`;
@@ -348,17 +404,13 @@ function resolveCompiledStep<TContext extends object>(
   return matches[0]!;
 }
 
-function createStepId(scenarioId: string, pickleStep: PickleStep, step: Step | undefined): string {
-  return step?.id ?? `${scenarioId}:${pickleStep.id}`;
-}
-
 function createScenarioSteps<TContext extends object>(
   scenarioId: string,
   pickle: Pickle,
   sourceInfo: PickleSourceInfo,
   compiledDefinitions: ReadonlyArray<CompiledStepDefinition<TContext>>,
 ) {
-  return pickle.steps.map((pickleStep) => {
+  return pickle.steps.map((pickleStep, index) => {
     const sourceStep = pickleStep.astNodeIds
       .map((astNodeId) => sourceInfo.stepByAstNodeId.get(astNodeId))
       .find((step): step is Step => step !== undefined);
@@ -368,7 +420,7 @@ function createScenarioSteps<TContext extends object>(
     const type = toStepType(sourceStep?.keywordType);
 
     return defineStep<TContext>({
-      id: createStepId(scenarioId, pickleStep, sourceStep),
+      id: `${scenarioId}:step-${index + 1}`,
       name: pickleStep.text,
       type,
       metadata: {
@@ -469,7 +521,10 @@ export function createGherkinStory<TContext extends object>(
     throw new Error(`Unable to parse Gherkin feature from ${uri}`);
   }
 
-  const scenarios = pickles.map((pickle) => {
+  const identities = createScenarioIdentities(feature, pickles);
+
+  const scenarios = pickles.map((pickle, pickleIndex) => {
+    const identity = identities[pickleIndex]!;
     const sourceInfo = findSourceInfoForPickle(pickle, sourceLookup);
     const tags = toScenarioTags(sourceInfo.scenario.tags, pickle);
     const storyTitle = sourceInfo.rule?.name ?? feature.name;
@@ -494,8 +549,8 @@ export function createGherkinStory<TContext extends object>(
     };
 
     return defineScenario<TContext>({
-      id: pickle.id,
-      title: pickle.name,
+      id: identity.id,
+      title: identity.title,
       ...(createScenarioDescription(sourceInfo, pickle)
         ? { description: createScenarioDescription(sourceInfo, pickle)! }
         : {}),
@@ -524,7 +579,7 @@ export function createGherkinStory<TContext extends object>(
           },
         },
       },
-      steps: createScenarioSteps(pickle.id, pickle, sourceInfo, compiledDefinitions),
+      steps: createScenarioSteps(identity.id, pickle, sourceInfo, compiledDefinitions),
       story: {
         ...(sourceInfo.rule ? { id: sourceInfo.rule.id } : {}),
         title: storyTitle,

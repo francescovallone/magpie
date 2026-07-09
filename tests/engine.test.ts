@@ -12,6 +12,190 @@ import {
   scenario,
 } from "../src/index.js";
 
+describe("executeScenario retries", () => {
+  it("retries a failing scenario and reports the number of attempts", async () => {
+    let executions = 0;
+    const afterScenarioResults: Array<{ success: boolean; attempts?: number }> = [];
+
+    const subject = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "flaky",
+      title: "Flaky scenario",
+      retries: 2,
+      steps: [
+        {
+          id: "then-flaky",
+          name: "eventually passes",
+          type: "then",
+          execute: () => {
+            executions += 1;
+            if (executions < 3) {
+              throw new Error(`attempt ${executions} failed`);
+            }
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(subject, {
+      hooks: {
+        afterScenario: (_scenario, _context, scenarioResult) => {
+          afterScenarioResults.push({
+            success: scenarioResult.success,
+            ...(scenarioResult.attempts !== undefined
+              ? { attempts: scenarioResult.attempts }
+              : {}),
+          });
+        },
+      },
+    });
+
+    expect(executions).toBe(3);
+    expect(result.success).toBe(true);
+    expect(result.attempts).toBe(3);
+    // afterScenario fires once, with the final result.
+    expect(afterScenarioResults).toEqual([{ success: true, attempts: 3 }]);
+  });
+
+  it("stops retrying once the retry budget is exhausted", async () => {
+    let executions = 0;
+
+    const subject = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "always-fails",
+      title: "Always fails",
+      retries: 1,
+      steps: [
+        {
+          id: "then-fails",
+          name: "never passes",
+          type: "then",
+          execute: () => {
+            executions += 1;
+            throw new Error("nope");
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(subject);
+
+    expect(executions).toBe(2);
+    expect(result.success).toBe(false);
+    expect(result.attempts).toBe(2);
+    expect(result.failure?.error.message).toBe("nope");
+  });
+
+  it("does not set attempts when the scenario passes on the first try", async () => {
+    const subject = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "stable",
+      title: "Stable scenario",
+      retries: 3,
+      steps: [
+        { id: "then-passes", name: "passes", type: "then", execute: () => undefined },
+      ],
+    });
+
+    const result = await executeScenario(subject);
+
+    expect(result.success).toBe(true);
+    expect(result.attempts).toBeUndefined();
+  });
+
+  it("applies the option-level retry default and lets scenario retries win", async () => {
+    let optionRetried = 0;
+    let scenarioRetried = 0;
+
+    const usesDefault = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "uses-default",
+      title: "Uses option default",
+      steps: [
+        {
+          id: "then-fails",
+          name: "fails",
+          type: "then",
+          execute: () => {
+            optionRetried += 1;
+            throw new Error("fail");
+          },
+        },
+      ],
+    });
+
+    const overridesDefault = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "overrides-default",
+      title: "Overrides option default",
+      retries: 0,
+      steps: [
+        {
+          id: "then-fails",
+          name: "fails",
+          type: "then",
+          execute: () => {
+            scenarioRetried += 1;
+            throw new Error("fail");
+          },
+        },
+      ],
+    });
+
+    await executeScenario(usesDefault, { retries: 2 });
+    await executeScenario(overridesDefault, { retries: 2 });
+
+    expect(optionRetried).toBe(3);
+    expect(scenarioRetried).toBe(1);
+  });
+
+  it("retries failing sub-scenarios independently", async () => {
+    const executionsByGiven = new Map<string, number>();
+    const bump = (id: string) => {
+      const count = (executionsByGiven.get(id) ?? 0) + 1;
+      executionsByGiven.set(id, count);
+      return count;
+    };
+
+    const subject = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "multi-given",
+      title: "Multi given",
+      acceptance: ["AC-100"],
+      retries: 1,
+      steps: [
+        { id: "given-a", name: "case a", type: "given", execute: () => void bump("a") },
+        { id: "then-a", name: "a passes", type: "then", execute: () => undefined },
+        { id: "given-b", name: "case b", type: "given", execute: () => void bump("b") },
+        {
+          id: "then-b",
+          name: "b passes on retry",
+          type: "then",
+          execute: () => {
+            if (executionsByGiven.get("b") === 1) {
+              throw new Error("first b attempt fails");
+            }
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(subject);
+
+    expect(result.success).toBe(true);
+    // Sub-scenario "a" passed on its first attempt; only "b" was retried.
+    expect(executionsByGiven.get("a")).toBe(1);
+    expect(executionsByGiven.get("b")).toBe(2);
+    expect(result.subScenarios?.[0]?.attempts).toBeUndefined();
+    expect(result.subScenarios?.[1]?.attempts).toBe(2);
+  });
+
+  it("rejects a negative retry count", () => {
+    expect(() =>
+      defineAcceptanceScenario<Record<string, unknown>>({
+        id: "bad-retries",
+        title: "Bad retries",
+        retries: -1,
+        steps: [],
+      }),
+    ).toThrow("retries must be a non-negative integer");
+  });
+});
+
 describe("executeScenario", () => {
   it("executes steps sequentially, shares context, stops on failure, and runs cleanup", async () => {
     const lifecycleEvents: Array<string> = [];

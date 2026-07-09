@@ -85,6 +85,68 @@ Feature: Authentication
     ]);
   });
 
+  it("assigns stable, deterministic scenario and step ids across parses", () => {
+    const feature = `
+Feature: Authentication
+
+  Scenario: Registered user logs in
+    Given a step
+
+  Scenario Outline: Login fails with <password>
+    Given a step
+
+    Examples:
+      | password |
+      | wrong    |
+      | expired  |
+`;
+    const options = {
+      stepDefinitions: [defineGherkinStep({ expression: "a step", execute: () => undefined })],
+    };
+
+    const first = createGherkinScenarios<Record<string, unknown>>(feature, options);
+    const second = createGherkinScenarios<Record<string, unknown>>(feature, options);
+
+    expect(first.map((scenario) => scenario.id)).toEqual([
+      "authentication:registered-user-logs-in",
+      "authentication:login-fails-with-wrong",
+      "authentication:login-fails-with-expired",
+    ]);
+    // Same feature text always produces the same ids.
+    expect(second.map((scenario) => scenario.id)).toEqual(first.map((scenario) => scenario.id));
+    expect(first[0]?.steps[0]?.id).toBe("authentication:registered-user-logs-in:step-1");
+  });
+
+  it("disambiguates outline examples whose title has no placeholders", () => {
+    const scenarios = createGherkinScenarios<Record<string, unknown>>(
+      `
+Feature: Withdrawals
+
+  Scenario Outline: Withdraw from account
+    Given a withdrawal of <amount>
+
+    Examples:
+      | amount |
+      | 20     |
+      | 50     |
+`,
+      {
+        stepDefinitions: [
+          defineGherkinStep({ expression: "a withdrawal of {int}", execute: () => undefined }),
+        ],
+      },
+    );
+
+    expect(scenarios.map((scenario) => scenario.id)).toEqual([
+      "withdrawals:withdraw-from-account:1",
+      "withdrawals:withdraw-from-account:2",
+    ]);
+    expect(scenarios.map((scenario) => scenario.title)).toEqual([
+      "Withdraw from account #1",
+      "Withdraw from account #2",
+    ]);
+  });
+
   it("preserves doc strings and tables in step metadata and execution match data", async () => {
     const capturedArguments: Array<unknown> = [];
     const capturedDocStrings: Array<string> = [];

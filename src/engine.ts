@@ -48,6 +48,8 @@ export interface SubScenarioExecutionResult<TContext extends object> {
   readonly logs: ReadonlyArray<ExecutionLogEntry>;
   readonly steps: ReadonlyArray<StepExecutionResult>;
   readonly failure?: ScenarioFailure<TContext>;
+  /** Present when the sub-scenario was retried; total number of attempts executed. */
+  readonly attempts?: number;
 }
 
 export interface ScenarioExecutionResult<TContext extends object> {
@@ -62,6 +64,12 @@ export interface ScenarioExecutionResult<TContext extends object> {
   readonly logs: ReadonlyArray<ExecutionLogEntry>;
   readonly steps: ReadonlyArray<StepExecutionResult>;
   readonly failure?: ScenarioFailure<TContext>;
+  /**
+   * Present when the scenario was retried (via `Scenario.retries` or
+   * `ExecuteScenarioOptions.retries`); total number of attempts executed.
+   * The result reflects the last attempt.
+   */
+  readonly attempts?: number;
   /**
    * Present when the scenario has more than one "given" step. Each entry is
    * the independent result of executing one sub-scenario. If any
@@ -102,6 +110,11 @@ export interface ExecuteScenarioOptions<TContext extends object> {
   readonly createContext?: () => TContext;
   readonly hooks?: ExecutionHooks<TContext>;
   readonly now?: () => number;
+  /**
+   * Default number of retries for scenarios that do not declare their own
+   * `retries`. A scenario-level `retries` always takes precedence.
+   */
+  readonly retries?: number;
 }
 
 export interface ExecuteScenariosOptions<TContext extends object>
@@ -483,6 +496,10 @@ function createSyntheticSubScenario<TContext extends object>(
     Object.assign(synthetic, { story: scenario.story });
   }
 
+  if (scenario.retries !== undefined) {
+    Object.assign(synthetic, { retries: scenario.retries });
+  }
+
   return synthetic;
 }
 
@@ -524,6 +541,7 @@ async function executeScenarioWithSubScenarios<TContext extends object>(
       logs: subResult.logs,
       steps: subResult.steps,
       ...(subResult.failure ? { failure: subResult.failure } : {}),
+      ...(subResult.attempts !== undefined ? { attempts: subResult.attempts } : {}),
     });
   }
 
@@ -545,6 +563,19 @@ async function executeScenarioWithSubScenarios<TContext extends object>(
   return failure ? { ...resultBase, failure } : resultBase;
 }
 
+function resolveRetries<TContext extends object>(
+  scenario: Scenario<TContext>,
+  options: ExecuteScenarioOptions<TContext>,
+): number {
+  const retries = scenario.retries ?? options.retries ?? 0;
+
+  if (!Number.isInteger(retries) || retries < 0) {
+    throw new Error("retries must be a non-negative integer");
+  }
+
+  return retries;
+}
+
 export async function executeScenario<TContext extends object>(
   scenario: Scenario<TContext>,
   options: ExecuteScenarioOptions<TContext> = {},
@@ -553,6 +584,28 @@ export async function executeScenario<TContext extends object>(
     return executeScenarioWithSubScenarios(scenario, scenario.subScenarios, options);
   }
 
+  const maxAttempts = resolveRetries(scenario, options) + 1;
+  let result: ScenarioExecutionResult<TContext>;
+  let attempt = 0;
+
+  do {
+    attempt += 1;
+    result = await executeScenarioAttempt(scenario, options);
+  } while (!result.success && attempt < maxAttempts);
+
+  if (attempt > 1) {
+    result = { ...result, attempts: attempt };
+  }
+
+  await options.hooks?.afterScenario?.(scenario, result.context, result);
+
+  return result;
+}
+
+async function executeScenarioAttempt<TContext extends object>(
+  scenario: Scenario<TContext>,
+  options: ExecuteScenarioOptions<TContext>,
+): Promise<ScenarioExecutionResult<TContext>> {
   const now = options.now ?? (() => Date.now());
   const startedAt = now();
   const logs: Array<ExecutionLogEntry> = [];
@@ -711,11 +764,5 @@ export async function executeScenario<TContext extends object>(
     logs,
     steps: stepResults,
   };
-  const result: ScenarioExecutionResult<TContext> = failure
-    ? { ...resultBase, failure }
-    : resultBase;
-
-  await options.hooks?.afterScenario?.(scenario, context, result);
-
-  return result;
+  return failure ? { ...resultBase, failure } : resultBase;
 }

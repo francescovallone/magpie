@@ -12,7 +12,7 @@ export interface MagpiePluginOptions extends MagpieVitestReporterOptions {}
  *
  * ```ts
  * import { defineConfig } from "vitest/config";
- * import { magpiePlugin } from "magpie";
+ * import { magpiePlugin } from "@avesbox/magpie";
  *
  * export default defineConfig({
  *   plugins: [magpiePlugin({ jsonOutputFile: ".magpie/reports/latest.json" })],

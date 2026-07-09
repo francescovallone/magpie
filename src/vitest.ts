@@ -2,7 +2,7 @@ import { describe, it } from "vitest";
 
 import type { Scenario, Story } from "./domain.js";
 import { filterScenarios, type ScenarioFilter } from "./filtering.js";
-import type { AcceptanceReporter } from "./reporting.js";
+import { DEFAULT_QUARANTINE_TAGS, type AcceptanceReporter } from "./reporting.js";
 import { appendVitestReporterRecord, type VitestAdapterBridgeOptions } from "./vitest-bridge.js";
 import {
   executeScenario,
@@ -21,6 +21,12 @@ export interface VitestScenarioAdapterOptions<TContext extends object>
   readonly filter?: ScenarioFilter;
   readonly reporter?: AcceptanceReporter<TContext>;
   readonly reportToVitest?: boolean | VitestAdapterBridgeOptions;
+  /**
+   * Tags that mark a scenario as quarantined: it still runs and is recorded,
+   * but a failure does not fail the Vitest run. Defaults to
+   * `DEFAULT_QUARANTINE_TAGS` (`["quarantine"]`).
+   */
+  readonly quarantineTags?: ReadonlyArray<string>;
   readonly executor?: (
     scenario: Scenario<TContext>,
     options?: ExecuteScenarioOptions<TContext>,
@@ -47,8 +53,19 @@ async function recordVitestScenario<TContext extends object>(
   const bridgeOptions = resolveBridgeOptions(options.reportToVitest);
 
   if (bridgeOptions?.enabled) {
-    await appendVitestReporterRecord(scenario, result, bridgeOptions);
+    await appendVitestReporterRecord(scenario, result, {
+      ...(options.quarantineTags !== undefined ? { quarantineTags: options.quarantineTags } : {}),
+      ...bridgeOptions,
+    });
   }
+}
+
+function isQuarantinedScenario<TContext extends object>(
+  scenario: Scenario<TContext>,
+  options: VitestScenarioAdapterOptions<TContext>,
+): boolean {
+  const quarantineTags = options.quarantineTags ?? DEFAULT_QUARANTINE_TAGS;
+  return scenario.tags.some((tag) => quarantineTags.includes(tag));
 }
 
 function throwVitestFailure<TContext extends object>(
@@ -73,7 +90,7 @@ export function registerScenario<TContext extends object>(
       const result = await executor(scenario, options);
       await recordVitestScenario(scenario, result, options);
 
-      if (!result.success) {
+      if (!result.success && !isQuarantinedScenario(scenario, options)) {
         throwVitestFailure(result);
       }
     });
@@ -92,7 +109,7 @@ export function registerStory<TContext extends object>(
         const result = await (options.executor ?? executeScenario)(scenario, options);
         await recordVitestScenario(scenario, result, options);
 
-        if (!result.success) {
+        if (!result.success && !isQuarantinedScenario(scenario, options)) {
           throwVitestFailure(result);
         }
       });
@@ -113,7 +130,7 @@ export function registerFilteredStory<TContext extends object>(
         const result = await (options.executor ?? executeScenario)(scenario, options);
         await recordVitestScenario(scenario, result, options);
 
-        if (!result.success) {
+        if (!result.success && !isQuarantinedScenario(scenario, options)) {
           throwVitestFailure(result);
         }
       });

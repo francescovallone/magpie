@@ -73,6 +73,12 @@ export interface Scenario<TContext extends object = Record<string, unknown>> {
   readonly steps: ReadonlyArray<ScenarioStep<TContext>>;
   readonly story?: StoryReference;
   /**
+   * Number of times a failing execution is retried before the scenario is
+   * reported as failed. Defaults to 0 (no retries). When the scenario has
+   * sub-scenarios, each sub-scenario is retried independently.
+   */
+  readonly retries?: number;
+  /**
    * Present when the scenario contains more than one "given" step. See
    * `SubScenario` for details on how steps are grouped.
    */
@@ -108,6 +114,8 @@ export interface ScenarioDefinitionInput<TContext extends object> {
   readonly metadata?: Record<string, unknown>;
   readonly steps: ReadonlyArray<ScenarioStep<TContext> | StepDefinitionInput<TContext>>;
   readonly story?: StoryReference;
+  /** Number of times a failing execution is retried (see `Scenario.retries`). */
+  readonly retries?: number;
 }
 
 export interface StoryDefinitionInput<TContext extends object> {
@@ -276,6 +284,14 @@ export function defineScenario<TContext extends object>(
 
   if (input.dependsOn !== undefined) {
     Object.assign(scenario, { dependsOn: Object.freeze([...input.dependsOn]) });
+  }
+
+  if (input.retries !== undefined) {
+    if (!Number.isInteger(input.retries) || input.retries < 0) {
+      throw new Error("retries must be a non-negative integer");
+    }
+
+    Object.assign(scenario, { retries: input.retries });
   }
 
   if (input.story) {

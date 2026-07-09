@@ -9,13 +9,14 @@ import {
   resolveAcceptanceIds,
   type ExecutionRunReport,
   type ReportBuildOptions,
+  type ScenarioReportOptions,
   type ScenarioDescriptor,
   type ScenarioReportRecord,
 } from "./reporting.js";
 
 const DEFAULT_RECORDS_DIRECTORY = ".magpie/vitest-records";
 
-export interface VitestReporterBridgeOptions {
+export interface VitestReporterBridgeOptions extends ScenarioReportOptions {
   readonly recordsDirectory?: string;
 }
 
@@ -67,10 +68,11 @@ export function createScenarioDescriptor<TContext extends object>(
 export function createScenarioReportRecord<TContext extends object>(
   scenario: Scenario<TContext>,
   result: ScenarioExecutionResult<TContext>,
+  options?: ScenarioReportOptions,
 ): ScenarioReportRecord {
   return {
     scenario: createScenarioDescriptor(scenario),
-    report: createScenarioReport(scenario, result),
+    report: createScenarioReport(scenario, result, options),
   };
 }
 
@@ -97,7 +99,11 @@ export async function appendVitestReporterRecord<TContext extends object>(
     `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`,
   );
 
-  await writeFile(filePath, `${JSON.stringify(createScenarioReportRecord(scenario, result))}\n`, "utf8");
+  await writeFile(
+    filePath,
+    `${JSON.stringify(createScenarioReportRecord(scenario, result, options))}\n`,
+    "utf8",
+  );
 }
 
 export async function readVitestReporterRecords(
