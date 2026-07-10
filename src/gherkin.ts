@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { CucumberExpression, ParameterTypeRegistry } from "@cucumber/cucumber-expressions";
 import { generateMessages } from "@cucumber/gherkin";
@@ -18,6 +19,7 @@ import {
 } from "@cucumber/messages";
 
 import { defineScenario, defineStory, defineStep, type Scenario, type Story } from "./domain.js";
+import { slugify } from "./slug.js";
 
 export interface GherkinStepArgumentDataTable {
   readonly rows: ReadonlyArray<ReadonlyArray<string>>;
@@ -54,14 +56,42 @@ export interface GherkinStepDefinitionInput<TContext extends object> {
   readonly execute: (match: GherkinStepMatch<TContext>) => Promise<void> | void;
 }
 
+/**
+ * A shared, mergeable collection of Gherkin step definitions. Create one per
+ * project (or per domain), register steps into it from any module, and pass
+ * it as `stepDefinitions` wherever an array of definitions is accepted.
+ */
+export interface GherkinStepRegistry<TContext extends object = Record<string, unknown>> {
+  readonly stepDefinitions: ReadonlyArray<GherkinStepDefinition<TContext>>;
+  /** Defines a step (same input as `defineGherkinStep`) and adds it to the registry. Chainable. */
+  define(input: GherkinStepDefinitionInput<TContext>): GherkinStepRegistry<TContext>;
+  /** Adds already-created step definitions. Chainable. */
+  add(...definitions: ReadonlyArray<GherkinStepDefinition<TContext>>): GherkinStepRegistry<TContext>;
+  /** Adds every definition from the given registries. Chainable. */
+  merge(...registries: ReadonlyArray<GherkinStepRegistry<TContext>>): GherkinStepRegistry<TContext>;
+}
+
+/** Step definitions accepted by the Gherkin importer: a plain array or a registry. */
+export type GherkinStepDefinitions<TContext extends object> =
+  | ReadonlyArray<GherkinStepDefinition<TContext>>
+  | GherkinStepRegistry<TContext>;
+
 export interface GherkinImportOptions<TContext extends object> {
   readonly uri?: string;
   readonly defaultDialect?: string;
-  readonly stepDefinitions: ReadonlyArray<GherkinStepDefinition<TContext>>;
+  readonly stepDefinitions: GherkinStepDefinitions<TContext>;
   readonly acceptanceTagPrefix?: string;
   readonly acceptanceTagPattern?: RegExp | string;
   readonly acceptanceMetadataPattern?: RegExp | string;
   readonly metadata?: Record<string, unknown>;
+  /**
+   * Whether generated scenarios with more than one `Given` keyword are split
+   * into independently executed sub-scenarios. Defaults to `true` (same as
+   * `defineScenario`); pass `false` to keep every scenario linear. Note that
+   * `And`/`But` continuation steps never start a new sub-scenario — only
+   * explicit repeated `Given` keywords do.
+   */
+  readonly splitOnGiven?: boolean;
 }
 
 export interface GherkinAcceptanceSource {
@@ -104,19 +134,6 @@ function normalizeTag(tag: string): string {
   return tag.startsWith("@") ? tag.slice(1) : tag;
 }
 
-const COMBINING_DIACRITICS = /[̀-ͯ]/g;
-
-function slugify(value: string): string {
-  const slug = value
-    .normalize("NFKD")
-    .replace(COMBINING_DIACRITICS, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-  return slug || "scenario";
-}
-
 interface ScenarioIdentity {
   readonly id: string;
   readonly title: string;
@@ -134,18 +151,18 @@ function createScenarioIdentities(
   feature: Feature,
   pickles: ReadonlyArray<Pickle>,
 ): ReadonlyArray<ScenarioIdentity> {
-  const featureSlug = slugify(feature.name);
+  const featureSlug = slugify(feature.name, "scenario");
   const totals = new Map<string, number>();
 
   for (const pickle of pickles) {
-    const baseId = `${featureSlug}:${slugify(pickle.name)}`;
+    const baseId = `${featureSlug}:${slugify(pickle.name, "scenario")}`;
     totals.set(baseId, (totals.get(baseId) ?? 0) + 1);
   }
 
   const occurrences = new Map<string, number>();
 
   return pickles.map((pickle) => {
-    const baseId = `${featureSlug}:${slugify(pickle.name)}`;
+    const baseId = `${featureSlug}:${slugify(pickle.name, "scenario")}`;
     const occurrence = (occurrences.get(baseId) ?? 0) + 1;
     occurrences.set(baseId, occurrence);
 
@@ -226,12 +243,20 @@ function toStepArgument(pickleStep: PickleStep): GherkinStepArgument | undefined
   return Object.keys(argument).length === 0 ? undefined : argument;
 }
 
+function toStepDefinitionArray<TContext extends object>(
+  stepDefinitions: GherkinStepDefinitions<TContext>,
+): ReadonlyArray<GherkinStepDefinition<TContext>> {
+  return Array.isArray(stepDefinitions)
+    ? stepDefinitions
+    : (stepDefinitions as GherkinStepRegistry<TContext>).stepDefinitions;
+}
+
 function compileStepDefinitions<TContext extends object>(
-  definitions: ReadonlyArray<GherkinStepDefinition<TContext>>,
+  stepDefinitions: GherkinStepDefinitions<TContext>,
 ): ReadonlyArray<CompiledStepDefinition<TContext>> {
   const parameterTypeRegistry = new ParameterTypeRegistry();
 
-  return definitions.map((definition) => ({
+  return toStepDefinitionArray(stepDefinitions).map((definition) => ({
     ...definition,
     compiledExpression: new CucumberExpression(definition.expression, parameterTypeRegistry),
   }));
@@ -394,7 +419,9 @@ function resolveCompiledStep<TContext extends object>(
   });
 
   if (matches.length === 0) {
-    throw new Error(`No Cucumber step definition matched: ${pickleStep.text}`);
+    throw new Error(
+      `No Cucumber step definition matched: ${pickleStep.text}\n\nImplement it with:\n\n${generateGherkinStepSnippet(pickleStep.text)}\n`,
+    );
   }
 
   if (matches.length > 1) {
@@ -507,6 +534,135 @@ export function defineGherkinStep<TContext extends object>(
   });
 }
 
+export function createGherkinStepRegistry<TContext extends object = Record<string, unknown>>(
+  initial: ReadonlyArray<GherkinStepDefinition<TContext>> = [],
+): GherkinStepRegistry<TContext> {
+  const definitions: Array<GherkinStepDefinition<TContext>> = [...initial];
+
+  const registry: GherkinStepRegistry<TContext> = {
+    get stepDefinitions() {
+      return Object.freeze([...definitions]);
+    },
+    define(input) {
+      definitions.push(defineGherkinStep(input));
+      return registry;
+    },
+    add(...nextDefinitions) {
+      definitions.push(...nextDefinitions);
+      return registry;
+    },
+    merge(...registries) {
+      for (const other of registries) {
+        definitions.push(...other.stepDefinitions);
+      }
+
+      return registry;
+    },
+  };
+
+  return registry;
+}
+
+function escapeCucumberExpressionText(value: string): string {
+  return value.replace(/[\\/{()]/g, (character) => `\\${character}`);
+}
+
+const SNIPPET_PLACEHOLDER_PATTERN = /"[^"]*"|(?<![\w-])-?\d+(?:\.\d+)?(?![\w.])/g;
+
+interface SuggestedExpression {
+  readonly expression: string;
+  readonly argumentNames: ReadonlyArray<string>;
+}
+
+/**
+ * Derives a Cucumber expression from a concrete step text: quoted values
+ * become `{string}`, whole numbers `{int}`, decimals `{float}`; characters
+ * Cucumber expressions treat specially are escaped.
+ */
+function suggestGherkinExpression(text: string): SuggestedExpression {
+  const argumentNames: Array<string> = [];
+  const counts: Record<string, number> = {};
+  let expression = "";
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(SNIPPET_PLACEHOLDER_PATTERN)) {
+    const token = match[0];
+    const kind = token.startsWith('"') ? "string" : token.includes(".") ? "float" : "int";
+    counts[kind] = (counts[kind] ?? 0) + 1;
+    argumentNames.push(`${kind}${counts[kind]}`);
+    expression += escapeCucumberExpressionText(text.slice(lastIndex, match.index));
+    expression += `{${kind}}`;
+    lastIndex = match.index + token.length;
+  }
+
+  expression += escapeCucumberExpressionText(text.slice(lastIndex));
+
+  return { expression, argumentNames };
+}
+
+/**
+ * Generates a ready-to-paste `defineGherkinStep()` snippet for a step text
+ * that has no matching definition. Used in the "undefined steps" error, and
+ * exported for tooling.
+ */
+export function generateGherkinStepSnippet(text: string): string {
+  const { expression, argumentNames } = suggestGherkinExpression(text);
+  const escapedExpression = expression.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const destructured = argumentNames.length
+    ? `{ arguments: [${argumentNames.join(", ")}], context }`
+    : "{ context }";
+
+  return [
+    "defineGherkinStep({",
+    `  expression: "${escapedExpression}",`,
+    `  execute: (${destructured}) => {`,
+    '    throw new Error("Step not implemented yet");',
+    "  },",
+    "});",
+  ].join("\n");
+}
+
+function collectUndefinedStepTexts<TContext extends object>(
+  pickles: ReadonlyArray<Pickle>,
+  compiledDefinitions: ReadonlyArray<CompiledStepDefinition<TContext>>,
+): ReadonlyArray<string> {
+  const unmatched = new Set<string>();
+
+  for (const pickle of pickles) {
+    for (const pickleStep of pickle.steps) {
+      const hasMatch = compiledDefinitions.some(
+        (definition) => definition.compiledExpression.match(pickleStep.text) !== null,
+      );
+
+      if (!hasMatch) {
+        unmatched.add(pickleStep.text);
+      }
+    }
+  }
+
+  return Object.freeze(Array.from(unmatched));
+}
+
+function assertAllStepsDefined<TContext extends object>(
+  uri: string,
+  pickles: ReadonlyArray<Pickle>,
+  compiledDefinitions: ReadonlyArray<CompiledStepDefinition<TContext>>,
+): void {
+  const undefinedTexts = collectUndefinedStepTexts(pickles, compiledDefinitions);
+
+  if (undefinedTexts.length === 0) {
+    return;
+  }
+
+  const listing = undefinedTexts.map((text) => `  - ${text}`).join("\n");
+  const snippets = undefinedTexts.map((text) => generateGherkinStepSnippet(text)).join("\n\n");
+
+  throw new Error(
+    `${undefinedTexts.length} Gherkin step(s) in ${uri} have no matching step definition:\n\n` +
+      `${listing}\n\nImplement them with:\n\n${snippets}\n`,
+  );
+}
+
 export function createGherkinStory<TContext extends object>(
   featureText: string,
   options: GherkinImportOptions<TContext>,
@@ -520,6 +676,8 @@ export function createGherkinStory<TContext extends object>(
   if (!feature) {
     throw new Error(`Unable to parse Gherkin feature from ${uri}`);
   }
+
+  assertAllStepsDefined(uri, pickles, compiledDefinitions);
 
   const identities = createScenarioIdentities(feature, pickles);
 
@@ -554,6 +712,7 @@ export function createGherkinStory<TContext extends object>(
       ...(createScenarioDescription(sourceInfo, pickle)
         ? { description: createScenarioDescription(sourceInfo, pickle)! }
         : {}),
+      ...(options.splitOnGiven !== undefined ? { splitOnGiven: options.splitOnGiven } : {}),
       acceptance: extractAcceptance(acceptanceSource, options as GherkinImportOptions<object>),
       tags,
       metadata: {
@@ -622,4 +781,52 @@ export async function createGherkinScenariosFromFile<TContext extends object>(
 ): Promise<ReadonlyArray<Scenario<TContext>>> {
   const story = await createGherkinStoryFromFile(filePath, options);
   return story.scenarios;
+}
+
+export interface GherkinDirectoryImportOptions<TContext extends object>
+  extends Omit<GherkinImportOptions<TContext>, "uri"> {
+  /** File extensions treated as feature files. Defaults to `[".feature"]`. */
+  readonly extensions?: ReadonlyArray<string>;
+}
+
+/**
+ * Recursively finds feature files under a directory. Results are sorted by
+ * full path so the returned order is deterministic across platforms.
+ */
+export async function findFeatureFiles(
+  directory: string,
+  extensions: ReadonlyArray<string> = [".feature"],
+): Promise<ReadonlyArray<string>> {
+  const normalizedExtensions = extensions.map((extension) => extension.toLowerCase());
+  const entries = await readdir(directory, { recursive: true, withFileTypes: true });
+
+  return Object.freeze(
+    entries
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          normalizedExtensions.some((extension) => entry.name.toLowerCase().endsWith(extension)),
+      )
+      .map((entry) => join(entry.parentPath, entry.name))
+      .sort(),
+  );
+}
+
+/**
+ * Loads every `.feature` file under a directory (recursively) and returns
+ * one story per file. Throws when the directory contains no feature files,
+ * so an empty suite never passes silently.
+ */
+export async function createGherkinStoriesFromDirectory<TContext extends object>(
+  directory: string,
+  options: GherkinDirectoryImportOptions<TContext>,
+): Promise<ReadonlyArray<Story<TContext>>> {
+  const { extensions, ...importOptions } = options;
+  const files = await findFeatureFiles(directory, extensions);
+
+  if (files.length === 0) {
+    throw new Error(`No feature files found under ${directory}`);
+  }
+
+  return Promise.all(files.map((filePath) => createGherkinStoryFromFile(filePath, importOptions)));
 }

@@ -1,3 +1,5 @@
+import { slugify } from "./slug.js";
+
 export type StepLifecycle = "main" | "cleanup";
 
 export interface StepTypeDefinition {
@@ -43,12 +45,13 @@ export interface ScenarioStep<TContext extends object = Record<string, unknown>>
 }
 
 /**
- * A scenario is split into sub-scenarios whenever it contains more than one
- * "given" step. Each sub-scenario starts at a "given" step and includes every
- * following step up to (but excluding) the next "given" step, plus any steps
- * that appear before the first "given" (e.g. "setup" steps). Sub-scenarios
- * are executed independently, but a failing sub-scenario fails the parent
- * scenario as a whole.
+ * A scenario containing more than one "given" step is split into
+ * sub-scenarios unless it opts out with `splitOnGiven: false`. Each
+ * sub-scenario starts at a "given" step and includes every following step up
+ * to (but excluding) the next "given" step, plus any steps that appear
+ * before the first "given" (e.g. "setup" steps). Sub-scenarios are executed
+ * independently, but a failing sub-scenario fails the parent scenario as a
+ * whole.
  */
 export interface SubScenario<TContext extends object = Record<string, unknown>> {
   readonly id: string;
@@ -79,8 +82,9 @@ export interface Scenario<TContext extends object = Record<string, unknown>> {
    */
   readonly retries?: number;
   /**
-   * Present when the scenario contains more than one "given" step. See
-   * `SubScenario` for details on how steps are grouped.
+   * Present when the scenario contains more than one "given" step and was
+   * not defined with `splitOnGiven: false`. See `SubScenario` for details on
+   * how steps are grouped.
    */
   readonly subScenarios?: ReadonlyArray<SubScenario<TContext>>;
 }
@@ -94,7 +98,13 @@ export interface Story<TContext extends object = Record<string, unknown>> {
 }
 
 export interface StepDefinitionInput<TContext extends object> {
-  readonly id: string;
+  /**
+   * Unique step id. Optional: when omitted, an id is derived by slugifying
+   * `name` (e.g. "registered user exists" -> `registered-user-exists`).
+   * Steps in the same scenario that end up with the same id are
+   * disambiguated with their 1-based occurrence (`-1`, `-2`, ...).
+   */
+  readonly id?: string;
   readonly name: string;
   readonly type: string;
   readonly execute: StepExecutor<TContext>;
@@ -105,7 +115,13 @@ export interface StepDefinitionInput<TContext extends object> {
 }
 
 export interface ScenarioDefinitionInput<TContext extends object> {
-  readonly id: string;
+  /**
+   * Unique scenario id. Optional: when omitted, an id is derived by
+   * slugifying `title`. Provide an explicit id when the title is expected
+   * to change but the id must stay stable (e.g. for `dependsOn` or
+   * report-history comparisons).
+   */
+  readonly id?: string;
   readonly title: string;
   readonly description?: string;
   readonly acceptance?: ReadonlyArray<AcceptanceReference>;
@@ -116,6 +132,12 @@ export interface ScenarioDefinitionInput<TContext extends object> {
   readonly story?: StoryReference;
   /** Number of times a failing execution is retried (see `Scenario.retries`). */
   readonly retries?: number;
+  /**
+   * Whether a scenario with more than one "given" step is split into
+   * independently executed sub-scenarios (see `SubScenario`). Defaults to
+   * `true`; pass `false` to run all steps as one linear scenario instead.
+   */
+  readonly splitOnGiven?: boolean;
 }
 
 export interface StoryDefinitionInput<TContext extends object> {
@@ -196,7 +218,7 @@ export function defineStep<TContext extends object>(
   input: StepDefinitionInput<TContext>,
 ): ScenarioStep<TContext> {
   return deepFreeze({
-    id: input.id,
+    id: input.id ?? slugify(input.name, "step"),
     name: input.name,
     type: input.type,
     lifecycle: input.lifecycle ?? "main",
@@ -260,17 +282,53 @@ function buildSubScenarios<TContext extends object>(
   );
 }
 
+/**
+ * Ensures step ids are unique within a scenario. When two or more steps
+ * share an id (typically ids derived from identical step names), every
+ * occurrence is suffixed with its 1-based position: `pay`, `pay` ->
+ * `pay-1`, `pay-2`. Steps with an already-unique id are left untouched.
+ */
+function disambiguateStepIds<TContext extends object>(
+  steps: ReadonlyArray<ScenarioStep<TContext>>,
+): ReadonlyArray<ScenarioStep<TContext>> {
+  const totals = new Map<string, number>();
+
+  for (const step of steps) {
+    totals.set(step.id, (totals.get(step.id) ?? 0) + 1);
+  }
+
+  if (!Array.from(totals.values()).some((count) => count > 1)) {
+    return steps;
+  }
+
+  const occurrences = new Map<string, number>();
+
+  return steps.map((step) => {
+    if ((totals.get(step.id) ?? 0) <= 1) {
+      return step;
+    }
+
+    const occurrence = (occurrences.get(step.id) ?? 0) + 1;
+    occurrences.set(step.id, occurrence);
+
+    return deepFreeze({ ...step, id: `${step.id}-${occurrence}` });
+  });
+}
+
 export function defineScenario<TContext extends object>(
   input: ScenarioDefinitionInput<TContext>,
 ): Scenario<TContext> {
   const steps: ReadonlyArray<ScenarioStep<TContext>> = Object.freeze(
-    input.steps.map((step) => (isScenarioStep(step) ? step : defineStep(step))),
+    disambiguateStepIds(
+      input.steps.map((step) => (isScenarioStep(step) ? step : defineStep(step))),
+    ),
   );
 
   const acceptance = Object.freeze([...(input.acceptance ?? [])]);
+  const scenarioId = input.id ?? slugify(input.title, "scenario");
 
   const scenario: Scenario<TContext> = {
-    id: input.id,
+    id: scenarioId,
     title: input.title,
     acceptance,
     tags: Object.freeze([...(input.tags ?? [])]),
@@ -298,7 +356,8 @@ export function defineScenario<TContext extends object>(
     Object.assign(scenario, { story: deepFreeze({ ...input.story }) });
   }
 
-  const subScenarios = buildSubScenarios(input.id, acceptance, steps);
+  const subScenarios =
+    input.splitOnGiven === false ? undefined : buildSubScenarios(scenarioId, acceptance, steps);
 
   if (subScenarios !== undefined) {
     Object.assign(scenario, { subScenarios });

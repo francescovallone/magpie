@@ -1,4 +1,4 @@
-import type { Scenario, Story } from "./domain.js";
+import type { Scenario, ScenarioStep, Story } from "./domain.js";
 import type {
   ExecutionHooks,
   ExecutionLogEntry,
@@ -25,6 +25,8 @@ export interface StepReport {
   readonly duration: number;
   readonly status: "passed" | "failed" | "skipped";
   readonly error?: string;
+  /** Full error (stack when available) regardless of `errors.verbose` — HTML reports show this in a collapsible detail. */
+  readonly errorDetail?: string;
   /** Present when log reporting is enabled and the step emitted logs via `api.log`. */
   readonly logs?: ReadonlyArray<ReportLogEntry>;
 }
@@ -38,6 +40,8 @@ export interface ScenarioReport {
   readonly duration: number;
   readonly status: "passed" | "failed";
   readonly error?: string;
+  /** Full error (stack when available) regardless of `errors.verbose` — HTML reports show this in a collapsible detail. */
+  readonly errorDetail?: string;
   readonly steps: ReadonlyArray<StepReport>;
   /** Present when log reporting is enabled; scenario-level entries only (step logs live on each step). */
   readonly logs?: ReadonlyArray<ReportLogEntry>;
@@ -274,6 +278,11 @@ function formatReportError(error: SerializedError, options?: ErrorReportingOptio
   return error.message.split("\n", 1)[0] ?? error.message;
 }
 
+/** Full error text (stack when available), independent of `errors.verbose` — always kept for HTML's collapsible detail. */
+function formatReportErrorDetail(error: SerializedError): string {
+  return error.stack ?? error.message;
+}
+
 function toReportLogEntries(
   logs: ReadonlyArray<ExecutionLogEntry>,
 ): ReadonlyArray<ReportLogEntry> {
@@ -296,7 +305,12 @@ function toStepReports(
   options?: ScenarioReportOptions,
 ): ReadonlyArray<StepReport> {
   return steps.map((step) => ({
-    ...(step.error ? { error: formatReportError(step.error, options?.errors) } : {}),
+    ...(step.error
+      ? {
+          error: formatReportError(step.error, options?.errors),
+          errorDetail: formatReportErrorDetail(step.error),
+        }
+      : {}),
     ...(options?.logs?.enabled && step.logs.length > 0
       ? { logs: toReportLogEntries(step.logs) }
       : {}),
@@ -307,6 +321,38 @@ function toStepReports(
     duration: step.duration,
     status: step.status,
   }));
+}
+
+function toSkippedStepReport<TContext extends object>(step: ScenarioStep<TContext>): StepReport {
+  return {
+    id: step.id,
+    name: step.name,
+    type: step.type,
+    lifecycle: step.lifecycle,
+    duration: 0,
+    status: "skipped",
+  };
+}
+
+/**
+ * Builds step reports preserving the scenario's full declared shape: steps
+ * the engine never ran (those after a failure) are reported as "skipped"
+ * instead of being omitted, in declaration order. Executed steps whose id is
+ * not in the declared list (defensive) are appended at the end.
+ */
+function buildStepReports<TContext extends object>(
+  declaredSteps: ReadonlyArray<ScenarioStep<TContext>>,
+  executedSteps: ReadonlyArray<StepExecutionResult>,
+  options?: ScenarioReportOptions,
+): ReadonlyArray<StepReport> {
+  const executedReports = toStepReports(executedSteps, options);
+  const executedById = new Map(executedReports.map((report) => [report.id, report]));
+  const declaredIds = new Set(declaredSteps.map((step) => step.id));
+
+  return [
+    ...declaredSteps.map((step) => executedById.get(step.id) ?? toSkippedStepReport(step)),
+    ...executedReports.filter((report) => !declaredIds.has(report.id)),
+  ];
 }
 
 /**
@@ -330,6 +376,17 @@ export function createScenarioReport<TContext extends object>(
   result: ScenarioExecutionResult<TContext>,
   options?: ScenarioReportOptions,
 ): ScenarioReport {
+  const cleanupSteps = scenario.steps.filter((step) => step.lifecycle === "cleanup");
+  const subStepReports = (result.subScenarios ?? []).map((subResult) => {
+    const subScenario = scenario.subScenarios?.find(
+      (candidate) => candidate.id === subResult.subScenarioId,
+    );
+
+    return subScenario
+      ? buildStepReports([...subScenario.steps, ...cleanupSteps], subResult.steps, options)
+      : toStepReports(subResult.steps, options);
+  });
+
   const report: ScenarioReport = {
     id: scenario.id,
     title: scenario.title,
@@ -337,7 +394,10 @@ export function createScenarioReport<TContext extends object>(
     tags: scenario.tags,
     duration: result.duration,
     status: result.success ? "passed" : "failed",
-    steps: toStepReports(result.steps, options),
+    steps:
+      subStepReports.length > 0
+        ? subStepReports.flat()
+        : buildStepReports(scenario.steps, result.steps, options),
   };
 
   if (scenario.story?.title !== undefined) {
@@ -345,7 +405,10 @@ export function createScenarioReport<TContext extends object>(
   }
 
   if (result.failure !== undefined) {
-    Object.assign(report, { error: formatReportError(result.failure.error, options?.errors) });
+    Object.assign(report, {
+      error: formatReportError(result.failure.error, options?.errors),
+      errorDetail: formatReportErrorDetail(result.failure.error),
+    });
   }
 
   if (options?.logs?.enabled) {
@@ -366,7 +429,7 @@ export function createScenarioReport<TContext extends object>(
 
   if (result.subScenarios && result.subScenarios.length > 0) {
     Object.assign(report, {
-      subScenarios: result.subScenarios.map((subResult) => {
+      subScenarios: result.subScenarios.map((subResult, subIndex) => {
         const subReport: ScenarioReport = {
           id: subResult.subScenarioId,
           title: `${scenario.title} \u2013 ${subResult.subScenarioId}`,
@@ -374,7 +437,7 @@ export function createScenarioReport<TContext extends object>(
           tags: scenario.tags,
           duration: subResult.duration,
           status: subResult.success ? "passed" : "failed",
-          steps: toStepReports(subResult.steps, options),
+          steps: subStepReports[subIndex] ?? toStepReports(subResult.steps, options),
         };
 
         if (scenario.story?.title !== undefined) {
@@ -384,6 +447,7 @@ export function createScenarioReport<TContext extends object>(
         if (subResult.failure !== undefined) {
           Object.assign(subReport, {
             error: formatReportError(subResult.failure.error, options?.errors),
+            errorDetail: formatReportErrorDetail(subResult.failure.error),
           });
         }
 
@@ -763,12 +827,24 @@ function stepStatusIcon(status: StepReport["status"]): string {
   return status === "skipped" ? "○" : "✗";
 }
 
+/** Error markup for HTML reports: the one-liner plus, when there's more, a native `<details>` with the full stack. */
+function renderErrorHtml(error?: string, errorDetail?: string): string {
+  if (!error) {
+    return "";
+  }
+
+  const detailHtml =
+    errorDetail && errorDetail !== error
+      ? `<details class="error-detail"><summary>Full error</summary><pre>${escapeHtml(errorDetail)}</pre></details>`
+      : "";
+
+  return `<p class="error">↳ ${escapeHtml(error)}</p>${detailHtml}`;
+}
+
 function renderStepsHtml(steps: ReadonlyArray<StepReport>): string {
   return steps
     .map((step) => {
-      const errorHtml = step.error
-        ? `<p class="error">↳ ${escapeHtml(step.error)}</p>`
-        : "";
+      const errorHtml = renderErrorHtml(step.error, step.errorDetail);
       const logsHtml = step.logs?.length
         ? `<ul class="logs">${step.logs
             .map((entry) => {
@@ -862,6 +938,9 @@ export function formatExecutionRunReportAsHtml(report: ExecutionRunReport): stri
     li.step-failed .icon { color: #b00020; }
     li.step-skipped .icon { color: #9e9e9e; }
     .error { flex-basis: 100%; margin: 0.1rem 0 0.25rem 1.75rem; color: #b00020; }
+    .error-detail { flex-basis: 100%; margin: 0 0 0.25rem 1.75rem; }
+    .error-detail summary { cursor: pointer; color: #b00020; font-size: 0.85rem; }
+    .error-detail pre { margin: 0.25rem 0 0; padding: 0.5rem; background: #fff5f5; border: 1px solid #f3c9c9; border-radius: 4px; font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; }
     ul.logs { flex-basis: 100%; list-style: none; margin: 0.1rem 0 0.25rem 1.75rem; padding: 0; color: #666; font-size: 0.85rem; }
     ul.logs li::before { content: "· "; }
     .badge { display: inline-block; font-size: 0.7rem; font-weight: 600; border-radius: 999px; padding: 0.1rem 0.5rem; vertical-align: middle; }

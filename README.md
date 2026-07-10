@@ -84,7 +84,6 @@ const login = defineAcceptanceScenario<LoginContext>({
   story: { title: "Authentication" },
   steps: [
     {
-      id: "given-user",
       name: "registered user exists",
       type: "given",
       execute: (context) => {
@@ -92,7 +91,6 @@ const login = defineAcceptanceScenario<LoginContext>({
       },
     },
     {
-      id: "when-login",
       name: "credentials are submitted",
       type: "when",
       execute: async (context) => {
@@ -100,7 +98,6 @@ const login = defineAcceptanceScenario<LoginContext>({
       },
     },
     {
-      id: "then-token",
       name: "token is returned",
       type: "then",
       execute: (context) => {
@@ -201,6 +198,8 @@ const checkout = defineAcceptanceScenario<CheckoutContext>({
 
 Steps receive `(context, api)` where `api.log(message, data?)` records structured diagnostics onto the execution result (see [Execution logs in reports](#execution-logs-in-reports)).
 
+Ids are optional everywhere they can be derived: a step without an `id` gets one slugified from its `name` (`"a cart with two items"` → `a-cart-with-two-items`), and a scenario without an `id` gets one slugified from its `title`. Steps in the same scenario that end up with the same id are disambiguated with their 1-based occurrence (`pay-1`, `pay-2`). Provide explicit ids when a name is expected to change but the id must stay stable (e.g. for `dependsOn` or report-history comparisons).
+
 ### Step types and lifecycle
 
 The standard step types are `setup`, `given`, `when`, `then`, and `cleanup`. All are ordinary steps — the type is metadata used for reporting and sub-scenario splitting — except `cleanup`, which has a distinct lifecycle: cleanup steps **always run**, even when a main step failed, and are appended to the result after the failure. Use them for teardown that must not be skipped:
@@ -217,40 +216,31 @@ Custom step types can be registered with `createStepTypeRegistry()` / `standardS
 
 ### The fluent builder
 
-`scenario()` is a thin wrapper producing the same immutable model, if you prefer chaining over one literal:
+`scenario()` is a thin wrapper producing the same immutable model, if you prefer chaining over one literal. Every step method accepts a `(name, execute)` shorthand, and the scenario id can be omitted (it is derived from the title):
 
 ```ts
 import { scenario } from "@avesbox/magpie";
 
-const login = scenario<{ response?: { status: number; token?: string } }>(
-  "auth-login",
-  "Registered user logs in",
-)
+const login = scenario<{ response?: { status: number; token?: string } }>("Registered user logs in")
   .acceptance("AUTH-001")
   .tag("auth", "critical")
-  .given({ id: "given-user", name: "registered user exists", execute: () => undefined })
-  .when({
-    id: "when-login",
-    name: "credentials are submitted",
-    execute: (context) => {
-      context.response = { status: 200, token: "token-123" };
-    },
+  .given("registered user exists", () => undefined)
+  .when("credentials are submitted", (context) => {
+    context.response = { status: 200, token: "token-123" };
   })
-  .then({
-    id: "then-token",
-    name: "token is returned",
-    execute: (context) => {
-      if (!context.response?.token) throw new Error("Expected a token");
-    },
+  .then("token is returned", (context) => {
+    if (!context.response?.token) throw new Error("Expected a token");
   })
   .build();
 ```
 
-The builder also exposes `.setup()`, `.cleanup()`, `.step()` (raw step input), `.description()`, `.dependsOn()`, and `.metadata()`.
+The object form is still available when a step needs an explicit `id`, `metadata`, or a custom `lifecycle` — `.given({ id: "given-user", name: "registered user exists", execute: ... })`. The builder also exposes `.setup()`, `.cleanup()`, `.step()` (raw step input), `.description()`, `.dependsOn()`, and `.metadata()`.
 
 ### Sub-scenarios
 
 A scenario with more than one `given` step is automatically split into independent sub-scenarios: each `given` starts a new sub-scenario made up of that `given` and every step up to (but excluding) the next `given`, plus any steps before the first `given` (e.g. `setup`). Sub-scenarios run independently — each gets a fresh context and its own result — but if any sub-scenario fails, the parent scenario is reported as failed.
+
+The split can be disabled per scenario with `splitOnGiven: false` (or `.splitOnGiven(false)` on the builder, or the `splitOnGiven` option on the Gherkin importer): all steps then run as one linear scenario sharing a single context, and no sub-scenario ids are generated. In Gherkin, only explicit repeated `Given` keywords split — `And`/`But` continuation steps never do.
 
 Each sub-scenario gets an acceptance id derived from the parent's by appending a two-digit index (`AC-001` → `AC-001-01`, `AC-001-02`, ...). Override per `given` with the second argument:
 
@@ -314,7 +304,17 @@ registerFilteredStory(story, {
 | `--scenario "Registered user logs in"` | `MAGPIE_SCENARIO=...` | scenario title |
 | `--regex critical` / `--grep critical` | `MAGPIE_REGEX=critical` | id, title, description, tags, acceptance, story |
 
-Because Vitest's CLI rejects flags it does not know, Magpie flags must come after a `--` that reaches Vitest — `vitest run -- --tag auth`, or through npm: `npm test -- -- --tag auth`.
+**The easiest way to pass these flags is the `magpie` CLI**, a thin wrapper installed with the package. It extracts the Magpie flags, converts them to `MAGPIE_*` environment variables (the transport that reliably reaches Vitest's worker processes), and forwards everything else to Vitest unchanged — no `--` passthrough needed:
+
+```bash
+npx magpie run --tag auth
+npx magpie run --coverage --acceptance "AUTH-*"
+npx magpie watch --story Authentication
+```
+
+Environment variables work everywhere too, including through npm scripts: `MAGPIE_TAGS=auth npm test`.
+
+If you call Vitest directly instead, its CLI rejects flags it does not know, so Magpie flags must come after a `--` that reaches Vitest — `vitest run -- --tag auth`, or through npm: `npm test -- -- --tag auth`.
 
 For programmatic filtering, build a filter object directly:
 
@@ -408,6 +408,67 @@ registerFilteredStory(story, { reportToVitest: true });
 
 Or load `.feature` files from disk with `createGherkinStoryFromFile(filePath, options)` / `createGherkinScenariosFromFile(filePath, options)`.
 
+### Step registries and feature discovery
+
+For anything beyond a single feature, define steps once in a shared registry and load a whole directory of `.feature` files:
+
+```ts
+// steps/registry.ts — modules add their steps to one shared registry
+import { createGherkinStepRegistry } from "@avesbox/magpie";
+
+export const steps = createGherkinStepRegistry<{ user?: string }>();
+
+steps
+  .define({
+    expression: "a registered user {string}",
+    execute: ({ arguments: [username], context }) => {
+      context.user = String(username);
+    },
+  })
+  .define({
+    expression: "the login succeeds",
+    execute: () => undefined,
+  });
+```
+
+```ts
+// features.acceptance.test.ts — one story per .feature file, recursively
+import { createGherkinStoriesFromDirectory, registerFilteredStory, resolveScenarioFilter } from "@avesbox/magpie";
+import { steps } from "./steps/registry.js";
+
+const stories = await createGherkinStoriesFromDirectory("./features", { stepDefinitions: steps });
+const filter = resolveScenarioFilter({ argv: process.argv.slice(2), env: process.env });
+
+for (const story of stories) {
+  registerFilteredStory(story, { filter, reportToVitest: true });
+}
+```
+
+Registries are mergeable (`registry.merge(other)`, `registry.add(...defs)`) and accepted anywhere `stepDefinitions` takes an array. `findFeatureFiles(directory)` is exported separately if you need the file list; discovery throws when a directory contains no feature files, so an empty suite never passes silently.
+
+### Undefined step snippets
+
+When feature text references steps that have no matching definition, the importer fails upfront with **every** undefined step of the feature and a ready-to-paste snippet for each:
+
+```text
+2 Gherkin step(s) in auth.feature have no matching step definition:
+
+  - a registered user "alice"
+  - the login succeeds
+
+Implement them with:
+
+defineGherkinStep({
+  expression: "a registered user {string}",
+  execute: ({ arguments: [string1], context }) => {
+    throw new Error("Step not implemented yet");
+  },
+});
+...
+```
+
+Quoted values are suggested as `{string}`, whole numbers as `{int}`, decimals as `{float}`. `generateGherkinStepSnippet(text)` is exported for tooling.
+
 The importer:
 
 - includes `Background` steps (feature- and rule-level) in every scenario
@@ -483,6 +544,7 @@ Either way, once configured:
 - the acceptance report is printed at the end of every run
 - a JSON artifact is written to `jsonOutputFile`, and every run is archived under `jsonArchiveDirectory` (default: `history/` next to the output file), keeping the 3 most recent by default (`jsonHistoryLimit`)
 - pass `htmlOutputFile` (and optionally `htmlArchiveDirectory`, `htmlHistoryLimit`) to also write a self-contained HTML report, archived the same way
+- pass `junitOutputFile` (and optionally `junitSuiteName`) to also write a JUnit XML report for the test-result panes of Jenkins, GitLab, Azure DevOps, and similar CI systems
 - suites participate by passing `reportToVitest: true` (or an options object) to `registerScenario` / `registerStory` / `registerFilteredStory`
 
 To make the HTML report opt-in from the command line, gate it on `isOutputEnabled()` in your config:
@@ -524,7 +586,7 @@ for (const scenario of story.scenarios) {
 const report = await reporter.flush(); // prints the text report, returns the ExecutionRunReport
 ```
 
-`createJsonReporter({ outputPath })` and `createHtmlReporter({ outputPath })` are drop-in equivalents that write a JSON artifact or a self-contained HTML page (inline CSS, no external dependencies) on `flush()`. They share the recorded entries API, so one execution pass can feed several reporters:
+`createJsonReporter({ outputPath })`, `createHtmlReporter({ outputPath })`, and `createJUnitReporter({ outputPath })` are drop-in equivalents that write a JSON artifact, a self-contained HTML page (inline CSS, no external dependencies), or a JUnit XML file on `flush()`. In the JUnit output each story becomes a `<testsuite>` and each scenario a `<testcase>`; failed quarantined scenarios are reported as skipped so they do not fail the CI stage. They share the recorded entries API, so one execution pass can feed several reporters:
 
 ```ts
 for (const entry of reporter.entries) {
@@ -533,7 +595,7 @@ for (const entry of reporter.entries) {
 await jsonReporter.flush();
 ```
 
-Lower-level building blocks are exported too: `buildExecutionRunReport()`, `createStoryReport()`, `formatExecutionRunReport()`, `formatExecutionRunReportAsHtml()`, `writeHtmlReport()`, and `writeJsonReport()`.
+Lower-level building blocks are exported too: `buildExecutionRunReport()`, `createStoryReport()`, `formatExecutionRunReport()`, `formatExecutionRunReportAsHtml()`, `formatExecutionRunReportAsJUnitXml()`, `writeHtmlReport()`, `writeJUnitReport()`, and `writeJsonReport()`.
 
 ### Debugging a failed scenario
 
@@ -550,14 +612,15 @@ const result = await executeScenario(login);
 // }
 ```
 
-Only steps that actually ran appear in `result.steps` — steps after the failure are omitted rather than marked "skipped"; cleanup steps are appended after the failure. The text report prints the failing step's error inline:
+Only steps that actually ran appear in `result.steps` — steps after the failure are not executed; cleanup steps are appended after the failure. **Reports** still show the scenario's full declared shape: steps that never ran are rendered as skipped (`○` in the text and HTML output, status `"skipped"` in JSON, counted in `skippedStepCount`), so a failing scenario never looks like it "lost" steps:
 
 ```text
   Scenario
     Registered user logs in
       ✓ given registered user exists
-      ✗ then token is returned
-        ↳ Expected a token
+      ✗ when credentials are submitted
+        ↳ Login service unavailable
+      ○ then token is returned
 ```
 
 and the JSON artifact carries the same information structurally, with `error` on both the failing step and the scenario.
@@ -573,6 +636,8 @@ const reporter = createConsoleReporter({
 ```
 
 The option is part of `ReportBuildOptions`, so it works identically with `createJsonReporter`, `createHtmlReporter`, `buildExecutionRunReport`, and — for reports assembled by the Magpie Vitest reporter — via the adapter's bridge options: `reportToVitest: { errors: { verbose: true } }`.
+
+The HTML report always keeps the full error too, independent of this option: every `StepReport`/`ScenarioReport` carries an `errorDetail` field with the full stack, and the HTML renderer shows it in a collapsible `<details>` under the one-line summary. `error` (used by the text/JSON/JUnit output) still respects `errors.verbose` as above.
 
 ### Execution logs in reports
 
@@ -690,11 +755,24 @@ if (report.traceability.missing.length > 0) {
 
 When scenarios have sub-scenarios, traceability uses the granular sub-scenario ids (`AC-001-01`, ...) instead of the parent's, and `createAcceptanceTraceabilityReport(scenarios, expectedIds)` is available for computing the split without running anything.
 
+### Loading acceptance ids from a file
+
+Hardcoding `expectedAcceptanceIds` drifts as requirements change. `loadAcceptanceIds(filePath)` reads them from a `.json` file (a bare `["AUTH-001", ...]` array) or a `.csv`/text export (one id per line; a header row like "Issue key" is skipped, first column used if the line has commas) — the shape a Jira or Azure Boards issue-key export already has once you keep just the id column:
+
+```ts
+import { createConsoleReporter, loadAcceptanceIds } from "@avesbox/magpie";
+
+const reporter = createConsoleReporter({
+  expectedAcceptanceIds: await loadAcceptanceIds("./requirements/AUTH.csv"),
+});
+```
+
 ## Recipes
 
 Short answers to "how do I ...":
 
-- **Run only critical scenarios locally** — `vitest run -- --tag critical` (with `registerFilteredStory` + `resolveScenarioFilter` wired as shown [above](#filtering-from-the-cli)).
+- **Run only critical scenarios locally** — `npx magpie run --tag critical` (with `registerFilteredStory` + `resolveScenarioFilter` wired as shown [above](#filtering-from-the-cli)).
+- **Show scenario results in the CI test pane (Jenkins, GitLab, Azure DevOps)** — pass `junitOutputFile: ".magpie/reports/junit.xml"` to `magpiePlugin()` and point the CI test-report step at that file.
 - **Retry a flaky scenario** — `retries: 2` on the scenario, or `{ retries: 1 }` in adapter/engine options as a suite-wide default.
 - **Stop a known-flaky scenario from breaking CI without deleting it** — add `tags: ["quarantine"]`; it keeps running and reporting, but no longer fails the run.
 - **See full stack traces in reports** — `errors: { verbose: true }` in reporter options (or `reportToVitest: { errors: { verbose: true } }`).
@@ -702,6 +780,7 @@ Short answers to "how do I ...":
 - **Reuse a step across scenarios** — create it once with `defineStep({...})` and reference it from several scenarios' `steps` arrays; scenarios are data, so sharing is plain object reuse.
 - **Order scenarios that depend on each other** — `dependsOn: ["other-id"]` + `executeScenarios()`; dependents are skipped automatically when a prerequisite fails.
 - **Guarantee teardown always runs** — declare the step with `type: "cleanup", lifecycle: "cleanup"` (or `.cleanup()` in the builder); cleanup runs even after a failure.
+- **Use several `given` steps without splitting the scenario** — `splitOnGiven: false` on the scenario (or `.splitOnGiven(false)`, or the importer option); all steps then share one context and run linearly.
 - **Keep Gherkin-generated ids usable in `dependsOn` and history diffs** — nothing to do; ids are [stable by construction](#scenario-outlines-and-stable-ids). Just remember renaming a scenario changes its id.
 - **Fail the build when a requirement has no scenario** — pass `expectedAcceptanceIds` and check `report.traceability.missing` (see [Acceptance traceability](#acceptance-traceability)).
 
@@ -717,4 +796,4 @@ Project scripts:
 
 The repository's GitHub Actions workflow runs typecheck and tests, and uploads `.magpie/reports/` as a build artifact — the latest report at `.magpie/reports/latest.json`, with history under `.magpie/reports/history/`.
 
-Implemented today: immutable scenario/story model, runner-agnostic engine with dependencies, retries, and quarantine; Vitest adapter and reporter; Gherkin importer with stable ids; filtering; console/JSON/HTML reporting with acceptance traceability. Not implemented yet: live dashboards, Playwright or other non-Vitest adapters.
+Implemented today: immutable scenario/story model, runner-agnostic engine with dependencies, retries, and quarantine; Vitest adapter and reporter; `magpie` CLI wrapper; Gherkin importer with stable ids, step registries, directory discovery, and undefined-step snippets; filtering; console/JSON/HTML/JUnit reporting with acceptance traceability. Not implemented yet: live dashboards, Playwright or other non-Vitest adapters.

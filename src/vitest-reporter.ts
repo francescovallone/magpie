@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
 
 import { writeJsonReport } from "./io.js";
+import { writeJUnitReport } from "./junit.js";
 import { formatExecutionRunReport, writeHtmlReport, type ReportBuildOptions } from "./reporting.js";
 import {
   buildVitestReporterExecutionReport,
@@ -22,6 +23,10 @@ export interface MagpieVitestReporterOptions
   readonly htmlOutputFile?: string;
   readonly htmlArchiveDirectory?: string;
   readonly htmlHistoryLimit?: number;
+  /** When set, a JUnit XML report is written to this path for CI test-result panes. */
+  readonly junitOutputFile?: string;
+  /** Name of the root `<testsuites>` element in the JUnit report. Defaults to `"magpie"`. */
+  readonly junitSuiteName?: string;
   readonly spacing?: number;
   readonly write?: (text: string) => Promise<void> | void;
 }
@@ -95,6 +100,12 @@ export class MagpieVitestReporter implements Reporter {
       await writeHtmlReport(join(archiveDirectory, createTimestampedReportFileName(report.generatedAt, ".html")), report);
 
       await pruneArchiveDirectory(archiveDirectory, this.options.htmlHistoryLimit ?? DEFAULT_HISTORY_FILE_LIMIT);
+    }
+
+    if (this.options.junitOutputFile) {
+      await writeJUnitReport(this.options.junitOutputFile, report, {
+        ...(this.options.junitSuiteName !== undefined ? { suiteName: this.options.junitSuiteName } : {}),
+      });
     }
   }
 }

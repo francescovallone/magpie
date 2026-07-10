@@ -27,15 +27,28 @@ export {
   type StepExecutionResult,
   type SubScenarioExecutionResult,
 } from "./engine.js";
-export { scenario, defineAcceptanceScenario, type GivenOptions, type ScenarioBuilder } from "./dsl.js";
+export {
+  scenario,
+  defineAcceptanceScenario,
+  type BuilderStepInput,
+  type GivenOptions,
+  type ScenarioBuilder,
+} from "./dsl.js";
 export {
   createGherkinScenarios,
   createGherkinScenariosFromFile,
+  createGherkinStepRegistry,
+  createGherkinStoriesFromDirectory,
   createGherkinStory,
   createGherkinStoryFromFile,
   defineGherkinStep,
+  findFeatureFiles,
+  generateGherkinStepSnippet,
   type GherkinAcceptanceSource,
+  type GherkinDirectoryImportOptions,
   type GherkinImportOptions,
+  type GherkinStepDefinitions,
+  type GherkinStepRegistry,
   type GherkinStepArgument,
   type GherkinStepArgumentDataTable,
   type GherkinStepArgumentDocString,
@@ -46,13 +59,29 @@ export {
 export { createScenarioFilter, filterScenarios, type ScenarioFilter } from "./filtering.js";
 export {
   isOutputEnabled,
+  MAGPIE_FLAG_NAMES,
+  partitionMagpieArgv,
   resolveOutputKinds,
   resolveScenarioFilter,
   selectScenarios,
+  toMagpieEnv,
+  type MagpieArgvPartition,
   type OutputResolutionOptions,
   type ScenarioFilterResolutionOptions,
 } from "./cli.js";
-export { writeJsonReport, writeTextFile, type JsonReportWriteOptions } from "./io.js";
+export {
+  createJUnitReporter,
+  formatExecutionRunReportAsJUnitXml,
+  writeJUnitReport,
+  type JUnitFormatOptions,
+  type JUnitReporterOptions,
+} from "./junit.js";
+export {
+  loadAcceptanceIds,
+  writeJsonReport,
+  writeTextFile,
+  type JsonReportWriteOptions,
+} from "./io.js";
 export {
   buildExecutionRunReport,
   createAcceptanceTraceabilityReport,

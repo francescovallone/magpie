@@ -13,6 +13,7 @@ export default defineConfig({
     magpiePlugin({
       jsonOutputFile: ".magpie/reports/latest.json",
       jsonArchiveDirectory: ".magpie/reports/history",
+      junitOutputFile: ".magpie/reports/junit.xml",
       ...(htmlReportingEnabled
         ? {
             htmlOutputFile: ".magpie/reports/latest.html",
