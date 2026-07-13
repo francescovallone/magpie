@@ -869,4 +869,4 @@ Project scripts:
 
 The repository's GitHub Actions workflow runs typecheck and tests, and uploads `.magpie/reports/` as a build artifact — the latest report at `.magpie/reports/latest.json`, with history under `.magpie/reports/history/`.
 
-Implemented today: immutable scenario/story model, runner-agnostic engine with dependencies, retries, and quarantine; Vitest adapter and reporter; `magpie` CLI wrapper; Gherkin importer with stable ids, step registries, directory discovery, and undefined-step snippets; filtering; console/JSON/HTML/JUnit reporting with acceptance traceability. Not implemented yet: live dashboards, Playwright or other non-Vitest adapters.
+Implemented today: immutable scenario/story model, runner-agnostic engine with dependencies, retries, and quarantine; Vitest adapter and reporter; `magpie` CLI wrapper; Gherkin importer with stable ids, step registries, directory discovery, and undefined-step snippets; filtering; console/JSON/HTML/JUnit reporting with acceptance traceability, Playwright. Not implemented yet: live dashboards or other non-Vitest adapters.
