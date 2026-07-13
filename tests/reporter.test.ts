@@ -162,6 +162,50 @@ describe("reporter", () => {
     expect(html).toContain("fetching token");
   });
 
+  it("writes inline attachment bodies to disk and reports name/contentType/path", async () => {
+    const reporter = createReporter<Record<string, unknown>>();
+    const scenario = defineAcceptanceScenario<Record<string, unknown>>({
+      id: "attached",
+      title: "Scenario with attachments",
+      acceptance: ["ATT-001"],
+      steps: [
+        {
+          id: "when-attach",
+          name: "step emits an attachment",
+          type: "when",
+          execute: (_context, api) => {
+            api.attach("screenshot.png", Buffer.from("fake-png-bytes"));
+            api.attach("notes.txt", "plain text body", "text/plain");
+          },
+        },
+      ],
+    });
+
+    const result = await executeScenario(scenario);
+    reporter.recordScenario(scenario, result);
+
+    const defaultReport = reporter.buildReport({ now: () => 0 });
+    expect(defaultReport.scenarios[0]?.steps[0]?.attachments).toBeUndefined();
+
+    const directory = join(tmpdir(), `magpie-attachments-${Date.now()}`);
+    const report = reporter.buildReport({ attachments: { enabled: true, directory }, now: () => 0 });
+    const attachments = report.scenarios[0]?.steps[0]?.attachments ?? [];
+
+    expect(attachments).toHaveLength(2);
+    expect(attachments[0]).toMatchObject({ name: "screenshot.png", contentType: "image/png" });
+    expect(attachments[1]).toMatchObject({ name: "notes.txt", contentType: "text/plain" });
+
+    const written = await readFile(attachments[1]!.path, "utf8");
+    expect(written).toBe("plain text body");
+
+    const output = formatExecutionRunReport(report);
+    expect(output).toContain(`📎 screenshot.png (${attachments[0]!.path})`);
+
+    const html = formatExecutionRunReportAsHtml(report);
+    expect(html).toContain(`<img class="attachment-image"`);
+    expect(html).toContain(`class="attachment-link"`);
+  });
+
   it("marks quarantined scenarios and excludes them from pass/fail totals", async () => {
     const reporter = createReporter<Record<string, unknown>>();
     const quarantined = defineAcceptanceScenario<Record<string, unknown>>({
@@ -558,6 +602,7 @@ describe("reporter", () => {
         finishedAt: 1,
         context: {},
         logs: [],
+        attachments: [],
         steps: [],
       }),
     });

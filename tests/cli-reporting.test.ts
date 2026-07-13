@@ -133,6 +133,7 @@ describe("filtered Vitest registration", () => {
         finishedAt: 1,
         context: {},
         logs: [],
+        attachments: [],
         steps: [],
       }),
     });

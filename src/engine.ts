@@ -1,3 +1,4 @@
+import { extname } from "node:path";
 import type {
   Scenario,
   ScenarioStep,
@@ -10,6 +11,29 @@ export interface ExecutionLogEntry {
   readonly message: string;
   readonly data?: unknown;
   readonly stepId?: string;
+}
+
+export interface ExecutionAttachment {
+  readonly timestamp: number;
+  readonly name: string;
+  readonly contentType: string;
+  readonly stepId?: string;
+  readonly body?: string | Uint8Array;
+  readonly path?: string;
+}
+
+const ATTACHMENT_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webm": "video/webm",
+  ".zip": "application/zip",
+  ".json": "application/json",
+  ".txt": "text/plain",
+};
+
+function inferAttachmentContentType(name: string): string {
+  return ATTACHMENT_CONTENT_TYPES[extname(name).toLowerCase()] ?? "application/octet-stream";
 }
 
 export interface SerializedError {
@@ -28,6 +52,7 @@ export interface StepExecutionResult {
   readonly startedAt: number;
   readonly finishedAt: number;
   readonly logs: ReadonlyArray<ExecutionLogEntry>;
+  readonly attachments: ReadonlyArray<ExecutionAttachment>;
   readonly error?: SerializedError;
 }
 
@@ -46,6 +71,7 @@ export interface SubScenarioExecutionResult<TContext extends object> {
   readonly finishedAt: number;
   readonly context: TContext;
   readonly logs: ReadonlyArray<ExecutionLogEntry>;
+  readonly attachments: ReadonlyArray<ExecutionAttachment>;
   readonly steps: ReadonlyArray<StepExecutionResult>;
   readonly failure?: ScenarioFailure<TContext>;
   /** Present when the sub-scenario was retried; total number of attempts executed. */
@@ -62,6 +88,7 @@ export interface ScenarioExecutionResult<TContext extends object> {
   readonly finishedAt: number;
   readonly context: TContext;
   readonly logs: ReadonlyArray<ExecutionLogEntry>;
+  readonly attachments: ReadonlyArray<ExecutionAttachment>;
   readonly steps: ReadonlyArray<StepExecutionResult>;
   readonly failure?: ScenarioFailure<TContext>;
   /**
@@ -514,6 +541,7 @@ async function executeScenarioWithSubScenarios<TContext extends object>(
 
   const subResults: Array<SubScenarioExecutionResult<TContext>> = [];
   const aggregatedLogs: Array<ExecutionLogEntry> = [];
+  const aggregatedAttachments: Array<ExecutionAttachment> = [];
   const aggregatedSteps: Array<StepExecutionResult> = [];
   let failure: ScenarioFailure<TContext> | undefined;
   let lastContext: TContext | undefined;
@@ -524,6 +552,7 @@ async function executeScenarioWithSubScenarios<TContext extends object>(
 
     lastContext = subResult.context;
     aggregatedLogs.push(...subResult.logs);
+    aggregatedAttachments.push(...subResult.attachments);
     aggregatedSteps.push(...subResult.steps);
 
     if (!failure && subResult.failure) {
@@ -539,6 +568,7 @@ async function executeScenarioWithSubScenarios<TContext extends object>(
       finishedAt: subResult.finishedAt,
       context: subResult.context,
       logs: subResult.logs,
+      attachments: subResult.attachments,
       steps: subResult.steps,
       ...(subResult.failure ? { failure: subResult.failure } : {}),
       ...(subResult.attempts !== undefined ? { attempts: subResult.attempts } : {}),
@@ -556,6 +586,7 @@ async function executeScenarioWithSubScenarios<TContext extends object>(
     finishedAt,
     context: lastContext ?? createContext(options),
     logs: Object.freeze(aggregatedLogs),
+    attachments: Object.freeze(aggregatedAttachments),
     steps: Object.freeze(aggregatedSteps),
     subScenarios: Object.freeze(subResults),
   };
@@ -609,6 +640,7 @@ async function executeScenarioAttempt<TContext extends object>(
   const now = options.now ?? (() => Date.now());
   const startedAt = now();
   const logs: Array<ExecutionLogEntry> = [];
+  const attachments: Array<ExecutionAttachment> = [];
   const stepResults: Array<StepExecutionResult> = [];
   const context = createContext(options);
   const { mainSteps, cleanupSteps } = partitionSteps(scenario);
@@ -634,6 +666,7 @@ async function executeScenarioAttempt<TContext extends object>(
   ): Promise<ExecutedStep> => {
     const stepStartedAt = now();
     const stepLogs: Array<ExecutionLogEntry> = [];
+    const stepAttachments: Array<ExecutionAttachment> = [];
     const stepLogger = (message: string, data?: unknown) => {
       const entry: ExecutionLogEntry = { timestamp: now(), message, stepId: step.id };
 
@@ -644,6 +677,24 @@ async function executeScenarioAttempt<TContext extends object>(
       logs.push(entry);
       stepLogs.push(entry);
     };
+    const attach = (
+      name: string,
+      body: string | Uint8Array | { readonly path: string },
+      contentType?: string,
+    ) => {
+      const entry: ExecutionAttachment = {
+        timestamp: now(),
+        name,
+        contentType: contentType ?? inferAttachmentContentType(name),
+        stepId: step.id,
+        ...(typeof body === "object" && !(body instanceof Uint8Array)
+          ? { path: body.path }
+          : { body }),
+      };
+
+      attachments.push(entry);
+      stepAttachments.push(entry);
+    };
 
     try {
       await options.hooks?.beforeStep?.(step, context);
@@ -651,6 +702,7 @@ async function executeScenarioAttempt<TContext extends object>(
       const api: StepExecutionApi<TContext> = {
         context,
         log: stepLogger,
+        attach,
       };
 
       await step.execute(context, api);
@@ -665,6 +717,7 @@ async function executeScenarioAttempt<TContext extends object>(
         startedAt: stepStartedAt,
         finishedAt: now(),
         logs: stepLogs,
+        attachments: stepAttachments,
       };
 
       await options.hooks?.afterStep?.(step, context, passedResult);
@@ -681,6 +734,7 @@ async function executeScenarioAttempt<TContext extends object>(
         startedAt: stepStartedAt,
         finishedAt: now(),
         logs: stepLogs,
+        attachments: stepAttachments,
         error: serializeError(error),
       };
 
@@ -732,6 +786,7 @@ async function executeScenarioAttempt<TContext extends object>(
         startedAt: now(),
         finishedAt: now(),
         logs: [],
+        attachments: [],
         error: serializeError(error),
       };
 
@@ -762,6 +817,7 @@ async function executeScenarioAttempt<TContext extends object>(
     finishedAt: now(),
     context,
     logs,
+    attachments,
     steps: stepResults,
   };
   return failure ? { ...resultBase, failure } : resultBase;

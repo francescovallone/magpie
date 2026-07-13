@@ -95,6 +95,33 @@ describe("JUnit XML reporter", () => {
     expect(written).toContain('name="Registered user logs in"');
   });
 
+  it("emits [[ATTACHMENT|path]] in system-out when attachments are enabled", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "magpie-junit-attach-"));
+    const scenario = defineAcceptanceScenario({
+      id: "attached",
+      title: "Scenario with an attachment",
+      story: { title: "Authentication" },
+      steps: [
+        {
+          name: "step emits an attachment",
+          type: "when",
+          execute: (_context, api) => {
+            api.attach("notes.txt", "body");
+          },
+        },
+      ],
+    });
+
+    const reporter = createReporter();
+    await reporter.recordScenario(scenario, await executeScenario(scenario));
+
+    const xml = formatExecutionRunReportAsJUnitXml(
+      reporter.buildReport({ attachments: { enabled: true, directory } }),
+    );
+
+    expect(xml).toMatch(/<system-out>\[\[ATTACHMENT\|.*notes\.txt\]\]<\/system-out>/);
+  });
+
   it("uses stories from defineStory groupings", async () => {
     const reporter = createReporter();
     const scenarioA = passingScenario("a", "A", "Story One");

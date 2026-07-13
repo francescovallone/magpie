@@ -21,6 +21,16 @@ export type AcceptanceReference = string;
 
 export interface StepExecutionApi<TContext extends object> {
   readonly log: (message: string, data?: unknown) => void;
+  /**
+   * Attaches a file to the step (screenshot, trace, log dump, ...). `body`
+   * is either inline content or `{ path }` pointing at a file already on
+   * disk. `contentType` is inferred from `name`'s extension when omitted.
+   */
+  readonly attach: (
+    name: string,
+    body: string | Uint8Array | { readonly path: string },
+    contentType?: string,
+  ) => void;
   readonly context: TContext;
 }
 

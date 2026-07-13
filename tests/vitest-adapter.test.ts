@@ -35,6 +35,7 @@ describe("Vitest adapter", () => {
         finishedAt: 1,
         context: {},
         logs: [],
+        attachments: [],
         steps: [],
       })),
     });
@@ -125,6 +126,7 @@ describe("Vitest adapter", () => {
         finishedAt: 1,
         context: {},
         logs: [],
+        attachments: [],
         steps: [],
         failure: {
           step: {
@@ -177,6 +179,7 @@ describe("Vitest adapter", () => {
         finishedAt: 1,
         context: {},
         logs: [],
+        attachments: [],
         steps: [],
         failure: {
           step: {
@@ -226,6 +229,7 @@ describe("Vitest adapter", () => {
         finishedAt: 1,
         context: {},
         logs: [],
+        attachments: [],
         steps: [],
         failure: {
           step: {
@@ -277,6 +281,7 @@ describe("Vitest adapter", () => {
           finishedAt: 1,
           context: {},
           logs: [],
+          attachments: [],
           steps: [],
         }),
       },

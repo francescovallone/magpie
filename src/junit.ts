@@ -56,11 +56,25 @@ function countScenarios(scenarios: ReadonlyArray<ScenarioReport>): SuiteCounts {
   return { tests: scenarios.length, failures, skipped };
 }
 
+/** `[[ATTACHMENT|path]]` in `<system-out>` — the convention Jenkins/GitLab already parse into report attachments. */
+function renderAttachmentsSystemOut(scenario: ScenarioReport): string {
+  const attachments = scenario.steps.flatMap((step) => step.attachments ?? []);
+
+  if (attachments.length === 0) {
+    return "";
+  }
+
+  const lines = attachments.map((attachment) => `[[ATTACHMENT|${attachment.path}]]`).join("\n");
+
+  return `\n      <system-out>${escapeXml(lines)}</system-out>`;
+}
+
 function renderTestCase(scenario: ScenarioReport, storyTitle: string): string {
   const attributes = `classname="${escapeXml(storyTitle)}" name="${escapeXml(scenario.title)}" time="${toSeconds(scenario.duration)}"`;
+  const systemOut = renderAttachmentsSystemOut(scenario);
 
   if (scenario.quarantined && scenario.status === "failed") {
-    return `    <testcase ${attributes}>\n      <skipped message="quarantined: failed but excluded from the run result"/>\n    </testcase>`;
+    return `    <testcase ${attributes}>\n      <skipped message="quarantined: failed but excluded from the run result"/>${systemOut}\n    </testcase>`;
   }
 
   if (scenario.status === "failed") {
@@ -70,7 +84,11 @@ function renderTestCase(scenario: ScenarioReport, storyTitle: string): string {
       ? `Failed step: ${failedStep.type} ${failedStep.name}\n${failedStep.error ?? message}`
       : message;
 
-    return `    <testcase ${attributes}>\n      <failure message="${escapeXml(message)}">${escapeXml(body)}</failure>\n    </testcase>`;
+    return `    <testcase ${attributes}>\n      <failure message="${escapeXml(message)}">${escapeXml(body)}</failure>${systemOut}\n    </testcase>`;
+  }
+
+  if (systemOut) {
+    return `    <testcase ${attributes}>${systemOut}\n    </testcase>`;
   }
 
   return `    <testcase ${attributes}/>`;

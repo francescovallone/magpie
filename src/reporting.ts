@@ -1,11 +1,15 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Scenario, ScenarioStep, Story } from "./domain.js";
 import type {
+  ExecutionAttachment,
   ExecutionHooks,
   ExecutionLogEntry,
   ScenarioExecutionResult,
   SerializedError,
   StepExecutionResult,
 } from "./engine.js";
+import { slugify } from "./slug.js";
 import { writeJsonReport, writeTextFile, type JsonReportWriteOptions } from "./io.js";
 
 /** Tags that mark a scenario as quarantined when no custom tags are configured. */
@@ -15,6 +19,13 @@ export interface ReportLogEntry {
   readonly timestamp: number;
   readonly message: string;
   readonly data?: unknown;
+}
+
+export interface ReportAttachment {
+  readonly name: string;
+  readonly contentType: string;
+  /** Path to the file on disk (inline bodies are written under `attachments.directory` at report-build time). */
+  readonly path: string;
 }
 
 export interface StepReport {
@@ -29,6 +40,8 @@ export interface StepReport {
   readonly errorDetail?: string;
   /** Present when log reporting is enabled and the step emitted logs via `api.log`. */
   readonly logs?: ReadonlyArray<ReportLogEntry>;
+  /** Present when attachment reporting is enabled and the step emitted attachments via `api.attach`. */
+  readonly attachments?: ReadonlyArray<ReportAttachment>;
 }
 
 export interface ScenarioReport {
@@ -45,6 +58,8 @@ export interface ScenarioReport {
   readonly steps: ReadonlyArray<StepReport>;
   /** Present when log reporting is enabled; scenario-level entries only (step logs live on each step). */
   readonly logs?: ReadonlyArray<ReportLogEntry>;
+  /** Present when attachment reporting is enabled; scenario-level entries only (step attachments live on each step). */
+  readonly attachments?: ReadonlyArray<ReportAttachment>;
   /** Present when the scenario was retried; total number of attempts executed. */
   readonly attempts?: number;
   /** Present when the scenario carries a quarantine tag; quarantined failures do not fail the run. */
@@ -130,10 +145,28 @@ export interface LogReportingOptions {
   readonly enabled?: boolean;
 }
 
+export interface AttachmentReportingOptions {
+  /**
+   * When `true`, reports include attachments emitted via `api.attach`.
+   * Inline bodies are written to `directory` at report-build time; `{ path }`
+   * attachments are referenced as-is. Disabled by default.
+   */
+  readonly enabled?: boolean;
+  /**
+   * Directory inline attachment bodies are written to. Defaults to
+   * `"attachments"` (relative to the process cwd).
+   * ponytail: not auto-resolved relative to a reporter's `outputPath` — pass
+   * an explicit directory (e.g. based on `path.dirname(outputPath)`) to
+   * colocate attachments with a specific report file.
+   */
+  readonly directory?: string;
+}
+
 /** Options that influence how a single scenario report is built. */
 export interface ScenarioReportOptions {
   readonly errors?: ErrorReportingOptions;
   readonly logs?: LogReportingOptions;
+  readonly attachments?: AttachmentReportingOptions;
   /**
    * Tags that mark a scenario as quarantined. Defaults to
    * `DEFAULT_QUARANTINE_TAGS` (`["quarantine"]`).
@@ -300,27 +333,72 @@ function isQuarantined(
   return tags.some((tag) => quarantineTags.includes(tag));
 }
 
+/** ponytail: no size limit/dedup on written attachments; add if reports start bloating a run's output directory. */
+function writeAttachmentBody(
+  directory: string,
+  scenarioId: string,
+  stepId: string,
+  attachment: ExecutionAttachment,
+  index: number,
+): string {
+  const dotIndex = attachment.name.lastIndexOf(".");
+  const ext = dotIndex > 0 ? attachment.name.slice(dotIndex) : "";
+  const baseName = dotIndex > 0 ? attachment.name.slice(0, dotIndex) : attachment.name;
+  const fileName = `${slugify(scenarioId)}-${slugify(stepId)}-${index}-${slugify(baseName, "attachment")}${ext}`;
+  const filePath = join(directory, fileName);
+
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(filePath, attachment.body ?? "");
+
+  return filePath;
+}
+
+function toReportAttachments(
+  scenarioId: string,
+  stepId: string,
+  attachments: ReadonlyArray<ExecutionAttachment>,
+  options?: ScenarioReportOptions,
+): ReadonlyArray<ReportAttachment> | undefined {
+  if (!options?.attachments?.enabled || attachments.length === 0) {
+    return undefined;
+  }
+
+  const directory = options.attachments.directory ?? "attachments";
+
+  return attachments.map((attachment, index) => ({
+    name: attachment.name,
+    contentType: attachment.contentType,
+    path: attachment.path ?? writeAttachmentBody(directory, scenarioId, stepId, attachment, index),
+  }));
+}
+
 function toStepReports(
+  scenarioId: string,
   steps: ReadonlyArray<StepExecutionResult>,
   options?: ScenarioReportOptions,
 ): ReadonlyArray<StepReport> {
-  return steps.map((step) => ({
-    ...(step.error
-      ? {
-          error: formatReportError(step.error, options?.errors),
-          errorDetail: formatReportErrorDetail(step.error),
-        }
-      : {}),
-    ...(options?.logs?.enabled && step.logs.length > 0
-      ? { logs: toReportLogEntries(step.logs) }
-      : {}),
-    id: step.stepId,
-    name: step.stepName,
-    type: step.type,
-    lifecycle: step.lifecycle,
-    duration: step.duration,
-    status: step.status,
-  }));
+  return steps.map((step) => {
+    const attachments = toReportAttachments(scenarioId, step.stepId, step.attachments, options);
+
+    return {
+      ...(step.error
+        ? {
+            error: formatReportError(step.error, options?.errors),
+            errorDetail: formatReportErrorDetail(step.error),
+          }
+        : {}),
+      ...(options?.logs?.enabled && step.logs.length > 0
+        ? { logs: toReportLogEntries(step.logs) }
+        : {}),
+      ...(attachments ? { attachments } : {}),
+      id: step.stepId,
+      name: step.stepName,
+      type: step.type,
+      lifecycle: step.lifecycle,
+      duration: step.duration,
+      status: step.status,
+    };
+  });
 }
 
 function toSkippedStepReport<TContext extends object>(step: ScenarioStep<TContext>): StepReport {
@@ -341,11 +419,12 @@ function toSkippedStepReport<TContext extends object>(step: ScenarioStep<TContex
  * not in the declared list (defensive) are appended at the end.
  */
 function buildStepReports<TContext extends object>(
+  scenarioId: string,
   declaredSteps: ReadonlyArray<ScenarioStep<TContext>>,
   executedSteps: ReadonlyArray<StepExecutionResult>,
   options?: ScenarioReportOptions,
 ): ReadonlyArray<StepReport> {
-  const executedReports = toStepReports(executedSteps, options);
+  const executedReports = toStepReports(scenarioId, executedSteps, options);
   const executedById = new Map(executedReports.map((report) => [report.id, report]));
   const declaredIds = new Set(declaredSteps.map((step) => step.id));
 
@@ -383,8 +462,8 @@ export function createScenarioReport<TContext extends object>(
     );
 
     return subScenario
-      ? buildStepReports([...subScenario.steps, ...cleanupSteps], subResult.steps, options)
-      : toStepReports(subResult.steps, options);
+      ? buildStepReports(scenario.id, [...subScenario.steps, ...cleanupSteps], subResult.steps, options)
+      : toStepReports(scenario.id, subResult.steps, options);
   });
 
   const report: ScenarioReport = {
@@ -397,7 +476,7 @@ export function createScenarioReport<TContext extends object>(
     steps:
       subStepReports.length > 0
         ? subStepReports.flat()
-        : buildStepReports(scenario.steps, result.steps, options),
+        : buildStepReports(scenario.id, scenario.steps, result.steps, options),
   };
 
   if (scenario.story?.title !== undefined) {
@@ -419,6 +498,15 @@ export function createScenarioReport<TContext extends object>(
     }
   }
 
+  if (options?.attachments?.enabled) {
+    const scenarioAttachments = result.attachments.filter((entry) => entry.stepId === undefined);
+    const attachments = toReportAttachments(scenario.id, "scenario", scenarioAttachments, options);
+
+    if (attachments) {
+      Object.assign(report, { attachments });
+    }
+  }
+
   if (result.attempts !== undefined) {
     Object.assign(report, { attempts: result.attempts });
   }
@@ -437,7 +525,7 @@ export function createScenarioReport<TContext extends object>(
           tags: scenario.tags,
           duration: subResult.duration,
           status: subResult.success ? "passed" : "failed",
-          steps: subStepReports[subIndex] ?? toStepReports(subResult.steps, options),
+          steps: subStepReports[subIndex] ?? toStepReports(scenario.id, subResult.steps, options),
         };
 
         if (scenario.story?.title !== undefined) {
@@ -743,6 +831,10 @@ function formatScenarioSteps(steps: ReadonlyArray<StepReport>, indent: string): 
       const data = entry.data !== undefined ? ` ${formatLogData(entry.data)}` : "";
       lines.push(`${indent}  · ${entry.message}${data}`);
     }
+
+    for (const attachment of step.attachments ?? []) {
+      lines.push(`${indent}  📎 ${attachment.name} (${attachment.path})`);
+    }
   }
 
   return lines.join("\n");
@@ -841,6 +933,16 @@ function renderErrorHtml(error?: string, errorDetail?: string): string {
   return `<p class="error">↳ ${escapeHtml(error)}</p>${detailHtml}`;
 }
 
+function renderAttachmentHtml(attachment: ReportAttachment): string {
+  const href = escapeHtml(attachment.path);
+
+  if (attachment.contentType.startsWith("image/")) {
+    return `<a href="${href}" target="_blank"><img class="attachment-image" src="${href}" alt="${escapeHtml(attachment.name)}" /></a>`;
+  }
+
+  return `<a class="attachment-link" href="${href}" download>${escapeHtml(attachment.name)}</a>`;
+}
+
 function renderStepsHtml(steps: ReadonlyArray<StepReport>): string {
   return steps
     .map((step) => {
@@ -853,12 +955,15 @@ function renderStepsHtml(steps: ReadonlyArray<StepReport>): string {
             })
             .join("")}</ul>`
         : "";
+      const attachmentsHtml = step.attachments?.length
+        ? `<div class="attachments">${step.attachments.map(renderAttachmentHtml).join("")}</div>`
+        : "";
 
       return `
         <li class="step step-${step.status}">
           <span class="icon">${stepStatusIcon(step.status)}</span>
           <span class="step-label">${escapeHtml(step.type)} ${escapeHtml(step.name)}</span>
-          ${errorHtml}${logsHtml}
+          ${errorHtml}${logsHtml}${attachmentsHtml}
         </li>`;
     })
     .join("");
@@ -943,6 +1048,9 @@ export function formatExecutionRunReportAsHtml(report: ExecutionRunReport): stri
     .error-detail pre { margin: 0.25rem 0 0; padding: 0.5rem; background: #fff5f5; border: 1px solid #f3c9c9; border-radius: 4px; font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; }
     ul.logs { flex-basis: 100%; list-style: none; margin: 0.1rem 0 0.25rem 1.75rem; padding: 0; color: #666; font-size: 0.85rem; }
     ul.logs li::before { content: "· "; }
+    .attachments { flex-basis: 100%; margin: 0.25rem 0 0.25rem 1.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .attachment-image { max-width: 200px; max-height: 150px; border: 1px solid #ddd; border-radius: 4px; }
+    .attachment-link { font-size: 0.85rem; }
     .badge { display: inline-block; font-size: 0.7rem; font-weight: 600; border-radius: 999px; padding: 0.1rem 0.5rem; vertical-align: middle; }
     .badge-quarantined { background: #fff3cd; color: #8a6d00; border: 1px solid #ffe08a; }
     .badge-attempts { background: #e3f2fd; color: #0d47a1; border: 1px solid #bbdefb; }

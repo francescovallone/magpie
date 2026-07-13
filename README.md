@@ -27,12 +27,15 @@ Scenario data ──▶ execution engine ──▶ Vitest adapter ──▶ repo
   - [Batch execution and dependencies](#batch-execution-and-dependencies)
 - [Gherkin and Cucumber](#gherkin-and-cucumber)
   - [Scenario Outlines and stable ids](#scenario-outlines-and-stable-ids)
+- [Importing acceptance criteria from DevOps](#importing-acceptance-criteria-from-devops)
+  - [Customizing the parsing process](#customizing-the-parsing-process)
 - [Reporting](#reporting)
   - [The Vitest reporter](#the-vitest-reporter)
   - [Standalone reporters](#standalone-reporters)
   - [Debugging a failed scenario](#debugging-a-failed-scenario)
   - [Error verbosity](#error-verbosity)
   - [Execution logs in reports](#execution-logs-in-reports)
+  - [Attachments in reports](#attachments-in-reports)
 - [Retries and quarantine](#retries-and-quarantine)
 - [Hooks](#hooks)
 - [Acceptance traceability](#acceptance-traceability)
@@ -501,6 +504,49 @@ When several generated scenarios share a name (an outline whose title has no pla
 
 Because ids survive re-parsing, they are safe to use in `dependsOn`, in id-based filtering, and for comparing archived report runs. Note that ids are derived from names: renaming a feature or scenario changes its id, which is the intended trade-off (the id follows the requirement, not the file).
 
+## Importing acceptance criteria from DevOps
+
+Work items in tools like Azure DevOps carry their Acceptance Criteria as **HTML** (the rich-text editor's storage format) or, if a team pastes it directly, plain **Markdown**. `createScenariosFromAcceptanceCriteria` reads either — both are normalized to the same plain text before parsing, so a bullet list renders identically whether it arrived as `<ul><li>` or `-`:
+
+```ts
+import { createScenariosFromAcceptanceCriteria } from "@avesbox/magpie";
+
+const acceptanceCriteria = /* the work item's Acceptance Criteria field, HTML or Markdown */ `
+  <p><strong>Scenario: Successful login</strong></p>
+  <ul>
+    <li>Given a registered user exists</li>
+    <li>When they submit valid credentials</li>
+    <li>Then a token is returned</li>
+  </ul>
+`;
+
+const scenarios = createScenariosFromAcceptanceCriteria(acceptanceCriteria, {
+  title: "User login",
+  workItemId: "AUTH-1234",
+  stepDefinitions,
+});
+```
+
+The default parser reads `Given`/`When`/`Then`/`And`/`But` bullet lines (optionally grouped under `Scenario: <title>` headings) and — reusing the Gherkin importer under the hood — resolves each step against `stepDefinitions` exactly like a `.feature` file would, so the same step registry works for both. `workItemId` tags every generated scenario with `@<workItemId>`, which flows through the existing Gherkin acceptance-tag extraction (`acceptanceTagPrefix` / `acceptanceTagPattern`, both accepted here too) for free.
+
+Content with more than one `Scenario:` heading — or more than one `Given` when headings are absent — returns **a list of scenarios**, one per block; content with a single block still returns a one-element list, so callers never need to branch on shape.
+
+### Customizing the parsing process
+
+Not every team writes acceptance criteria as Given/When/Then. Pass `parser` to fully replace the default: it receives the normalized (HTML/Markdown-agnostic) text plus the same import options, and may return a single `Scenario` or a list — both are accepted:
+
+```ts
+const scenarios = createScenariosFromAcceptanceCriteria(acceptanceCriteria, {
+  stepDefinitions,
+  parser: (normalizedText, options) => {
+    // e.g. a team that writes plain checklists instead of Given/When/Then
+    return myOwnParser(normalizedText).map((block) => defineScenario({ ...block, ... }));
+  },
+});
+```
+
+`normalizeAcceptanceCriteriaContent(content, contentType?)` is exported separately if you only need the HTML/Markdown normalization step (content type is auto-detected from the presence of HTML tags when omitted).
+
 ## Reporting
 
 ### The Vitest reporter
@@ -658,6 +704,33 @@ Each step report then carries its own `logs` array (message, timestamp, optional
 ```
 
 Like `errors`, this works with every reporter and with the bridge: `reportToVitest: { logs: { enabled: true } }`.
+
+### Attachments in reports
+
+Steps can attach a file through the execution API — a screenshot, a trace, a log dump:
+
+```ts
+execute: (context, api) => {
+  api.attach("screenshot.png", screenshotBuffer);
+  api.attach("trace.zip", { path: "/tmp/trace.zip" });
+  api.attach("notes.txt", "some diagnostic text", "text/plain");
+},
+```
+
+`attach(name, body, contentType?)` takes inline content (`string` or `Uint8Array`) or a reference to a file already on disk (`{ path }`). `contentType` is inferred from `name`'s extension (`.png`, `.jpg`/`.jpeg`, `.webm`, `.zip`, `.json`, `.txt`) when omitted, falling back to `application/octet-stream`.
+
+Attachments are always captured on the execution result; to include them in reports, enable `attachments: { enabled: true }`:
+
+```ts
+const reporter = createHtmlReporter({
+  outputPath: "report.html",
+  attachments: { enabled: true, directory: "report-attachments" },
+});
+```
+
+Inline bodies are written as files under `directory` (defaults to `"attachments"`, relative to the process cwd); `{ path }` attachments are referenced as-is. Each step report then carries an `attachments` array of `{ name, contentType, path }`. The HTML reporter renders images inline and other attachments as a download link; the console reporter prints one `📎 name (path)` line per attachment; the JUnit reporter emits `[[ATTACHMENT|path]]` in `<system-out>`, the convention Jenkins/GitLab already parse.
+
+Like `errors` and `logs`, this works with every reporter and with the bridge: `reportToVitest: { attachments: { enabled: true } }`.
 
 ## Retries and quarantine
 

@@ -19,6 +19,7 @@ export {
   executeScenario,
   type ExecuteScenariosOptions,
   type ExecuteScenarioOptions,
+  type ExecutionAttachment,
   type ExecutionHooks,
   mergeExecutionHooks,
   type ScenarioBatchExecutionResult,
@@ -57,6 +58,14 @@ export {
   type GherkinStepMatch,
 } from "./gherkin.js";
 export { createScenarioFilter, filterScenarios, type ScenarioFilter } from "./filtering.js";
+export {
+  createScenariosFromAcceptanceCriteria,
+  defaultAcceptanceCriteriaParser,
+  normalizeAcceptanceCriteriaContent,
+  type AcceptanceCriteriaContentType,
+  type AcceptanceCriteriaImportOptions,
+  type AcceptanceCriteriaParser,
+} from "./acceptance-criteria.js";
 export {
   isOutputEnabled,
   MAGPIE_FLAG_NAMES,
@@ -100,6 +109,7 @@ export {
   writeHtmlReport,
   type AcceptanceTraceabilityReport,
   type AcceptanceReporter,
+  type AttachmentReportingOptions,
   type ConsoleReporterOptions,
   type ErrorReportingOptions,
   type ExecutionRunReport,
@@ -107,6 +117,7 @@ export {
   type HtmlReporterOptions,
   type JsonReporterOptions,
   type LogReportingOptions,
+  type ReportAttachment,
   type ReportBuildOptions,
   type ReportLogEntry,
   type ScenarioReport,
