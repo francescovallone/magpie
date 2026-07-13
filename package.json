@@ -1,6 +1,6 @@
 {
   "name": "@avesbox/magpie",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "Acceptance criteria scenarios on top of Vitest.",
   "type": "module",
   "main": "./dist/index.js",
