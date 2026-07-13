@@ -1,4 +1,9 @@
-import { defineAcceptanceScenario, defineStory, registerFilteredStory, resolveScenarioFilter } from "../src/index.js";
+import {
+  defineAcceptanceScenario,
+  defineStory,
+  registerFilteredStory,
+  resolveScenarioFilter,
+} from "../src/index.js";
 
 type AuthContext = {
   response?: { status: number; token?: string };

@@ -188,7 +188,10 @@ describe("reporter", () => {
     expect(defaultReport.scenarios[0]?.steps[0]?.attachments).toBeUndefined();
 
     const directory = join(tmpdir(), `magpie-attachments-${Date.now()}`);
-    const report = reporter.buildReport({ attachments: { enabled: true, directory }, now: () => 0 });
+    const report = reporter.buildReport({
+      attachments: { enabled: true, directory },
+      now: () => 0,
+    });
     const attachments = report.scenarios[0]?.steps[0]?.attachments ?? [];
 
     expect(attachments).toHaveLength(2);
@@ -363,10 +366,9 @@ describe("reporter", () => {
     expect(report.traceability.implemented).toEqual(["AC-001-01", "AC-001-02"]);
     expect(report.traceability.missing).toEqual(["AC-001-03"]);
     expect(report.scenarios[0]?.subScenarios).toHaveLength(2);
-    expect(report.scenarios[0]?.subScenarios?.map((sub) => `${sub.status}:${sub.acceptance.join(",")}`)).toEqual([
-      "passed:AC-001-01",
-      "failed:AC-001-02",
-    ]);
+    expect(
+      report.scenarios[0]?.subScenarios?.map((sub) => `${sub.status}:${sub.acceptance.join(",")}`),
+    ).toEqual(["passed:AC-001-01", "failed:AC-001-02"]);
 
     const output = formatExecutionRunReport(report);
     expect(output).toContain("Sub-scenarios");

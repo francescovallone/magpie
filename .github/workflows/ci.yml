@@ -26,6 +26,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
       - name: Run unit project
         run: npm run test:unit
 
@@ -34,6 +40,15 @@ jobs:
 
       - name: Run full suite with Magpie reporter
         run: npm test
+
+      - name: Smoke test packed package
+        run: |
+          npm pack
+          mkdir /tmp/pack-smoke && cd /tmp/pack-smoke
+          npm init -y
+          npm install "$GITHUB_WORKSPACE"/avesbox-magpie-*.tgz vitest
+          node -e "import('@avesbox/magpie').then((m) => { if (typeof m.defineAcceptanceScenario !== 'function') throw new Error('bad entry point'); })"
+          npx magpie --help
 
       - name: Upload Magpie reports
         uses: actions/upload-artifact@v4

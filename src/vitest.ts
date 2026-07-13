@@ -15,8 +15,9 @@ export interface VitestApi {
   it(name: string, run: () => Promise<void> | void): void;
 }
 
-export interface VitestScenarioAdapterOptions<TContext extends object>
-  extends ExecuteScenarioOptions<TContext> {
+export interface VitestScenarioAdapterOptions<
+  TContext extends object,
+> extends ExecuteScenarioOptions<TContext> {
   readonly api?: VitestApi;
   readonly filter?: ScenarioFilter;
   readonly reporter?: AcceptanceReporter<TContext>;
@@ -122,7 +123,9 @@ export function registerFilteredStory<TContext extends object>(
   options: VitestScenarioAdapterOptions<TContext> = {},
 ): void {
   const api = options.api ?? { describe, it };
-  const scenarios = options.filter ? filterScenarios(story.scenarios, options.filter) : story.scenarios;
+  const scenarios = options.filter
+    ? filterScenarios(story.scenarios, options.filter)
+    : story.scenarios;
 
   api.describe(story.title, () => {
     for (const scenario of scenarios) {

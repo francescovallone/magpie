@@ -50,7 +50,9 @@ describe("JUnit XML reporter", () => {
     const xml = formatExecutionRunReportAsJUnitXml(reporter.buildReport());
 
     expect(xml).toContain('<?xml version="1.0" encoding="UTF-8"?>');
-    expect(xml).toContain('<testsuites name="magpie" tests="1" failures="0" errors="0" skipped="0"');
+    expect(xml).toContain(
+      '<testsuites name="magpie" tests="1" failures="0" errors="0" skipped="0"',
+    );
     expect(xml).toContain('<testsuite name="Authentication" tests="1" failures="0"');
     expect(xml).toContain('classname="Authentication" name="Registered user logs in"');
   });

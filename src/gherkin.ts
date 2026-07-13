@@ -7,7 +7,6 @@ import {
   IdGenerator,
   SourceMediaType,
   StepKeywordType,
-  type Background,
   type Feature,
   type GherkinDocument,
   type Pickle,
@@ -66,15 +65,16 @@ export interface GherkinStepRegistry<TContext extends object = Record<string, un
   /** Defines a step (same input as `defineGherkinStep`) and adds it to the registry. Chainable. */
   define(input: GherkinStepDefinitionInput<TContext>): GherkinStepRegistry<TContext>;
   /** Adds already-created step definitions. Chainable. */
-  add(...definitions: ReadonlyArray<GherkinStepDefinition<TContext>>): GherkinStepRegistry<TContext>;
+  add(
+    ...definitions: ReadonlyArray<GherkinStepDefinition<TContext>>
+  ): GherkinStepRegistry<TContext>;
   /** Adds every definition from the given registries. Chainable. */
   merge(...registries: ReadonlyArray<GherkinStepRegistry<TContext>>): GherkinStepRegistry<TContext>;
 }
 
 /** Step definitions accepted by the Gherkin importer: a plain array or a registry. */
 export type GherkinStepDefinitions<TContext extends object> =
-  | ReadonlyArray<GherkinStepDefinition<TContext>>
-  | GherkinStepRegistry<TContext>;
+  ReadonlyArray<GherkinStepDefinition<TContext>> | GherkinStepRegistry<TContext>;
 
 export interface GherkinImportOptions<TContext extends object> {
   readonly uri?: string;
@@ -234,7 +234,9 @@ function toStepArgument(pickleStep: PickleStep): GherkinStepArgument | undefined
     Object.assign(argument, {
       dataTable: {
         rows: Object.freeze(
-          pickleStep.argument.dataTable.rows.map((row) => Object.freeze(row.cells.map((cell) => cell.value))),
+          pickleStep.argument.dataTable.rows.map((row) =>
+            Object.freeze(row.cells.map((cell) => cell.value)),
+          ),
         ),
       },
     });
@@ -262,7 +264,11 @@ function compileStepDefinitions<TContext extends object>(
   }));
 }
 
-function createGherkinArtifacts(featureText: string, uri: string, defaultDialect?: string): GherkinArtifacts {
+function createGherkinArtifacts(
+  featureText: string,
+  uri: string,
+  defaultDialect?: string,
+): GherkinArtifacts {
   const options = {
     includeGherkinDocument: true,
     includePickles: true,
@@ -345,7 +351,9 @@ function collectScenarioSources(feature: Feature): ReadonlyMap<string, PickleSou
   return sourceByScenarioId;
 }
 
-function createPickleSourceLookup(gherkinDocument: GherkinDocument): ReadonlyMap<string, PickleSourceInfo> {
+function createPickleSourceLookup(
+  gherkinDocument: GherkinDocument,
+): ReadonlyMap<string, PickleSourceInfo> {
   const feature = gherkinDocument.feature;
 
   if (!feature) {
@@ -415,7 +423,9 @@ function resolveCompiledStep<TContext extends object>(
 ): { definition: CompiledStepDefinition<TContext>; arguments: ReadonlyArray<unknown> } {
   const matches = compiledDefinitions.flatMap((definition) => {
     const args = definition.compiledExpression.match(pickleStep.text);
-    return args ? [{ definition, arguments: args.map((arg) => arg.getValue<unknown>(undefined)) }] : [];
+    return args
+      ? [{ definition, arguments: args.map((arg) => arg.getValue<unknown>(undefined)) }]
+      : [];
   });
 
   if (matches.length === 0) {
@@ -441,7 +451,10 @@ function createScenarioSteps<TContext extends object>(
     const sourceStep = pickleStep.astNodeIds
       .map((astNodeId) => sourceInfo.stepByAstNodeId.get(astNodeId))
       .find((step): step is Step => step !== undefined);
-    const { definition, arguments: matchedArguments } = resolveCompiledStep(compiledDefinitions, pickleStep);
+    const { definition, arguments: matchedArguments } = resolveCompiledStep(
+      compiledDefinitions,
+      pickleStep,
+    );
     const argumentData = toStepArgument(pickleStep);
     const keyword = sourceStep?.keyword ?? "";
     const type = toStepType(sourceStep?.keywordType);
@@ -668,7 +681,11 @@ export function createGherkinStory<TContext extends object>(
   options: GherkinImportOptions<TContext>,
 ): Story<TContext> {
   const uri = options.uri ?? "feature.feature";
-  const { gherkinDocument, pickles } = createGherkinArtifacts(featureText, uri, options.defaultDialect);
+  const { gherkinDocument, pickles } = createGherkinArtifacts(
+    featureText,
+    uri,
+    options.defaultDialect,
+  );
   const sourceLookup = createPickleSourceLookup(gherkinDocument);
   const compiledDefinitions = compileStepDefinitions(options.stepDefinitions);
   const feature = gherkinDocument.feature;
@@ -783,8 +800,10 @@ export async function createGherkinScenariosFromFile<TContext extends object>(
   return story.scenarios;
 }
 
-export interface GherkinDirectoryImportOptions<TContext extends object>
-  extends Omit<GherkinImportOptions<TContext>, "uri"> {
+export interface GherkinDirectoryImportOptions<TContext extends object> extends Omit<
+  GherkinImportOptions<TContext>,
+  "uri"
+> {
   /** File extensions treated as feature files. Defaults to `[".feature"]`. */
   readonly extensions?: ReadonlyArray<string>;
 }

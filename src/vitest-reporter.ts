@@ -3,9 +3,10 @@ import { dirname, join } from "node:path";
 
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
 
+import { writeHtmlReport } from "./html.js";
 import { writeJsonReport } from "./io.js";
 import { writeJUnitReport } from "./junit.js";
-import { formatExecutionRunReport, writeHtmlReport, type ReportBuildOptions } from "./reporting.js";
+import { formatExecutionRunReport, type ReportBuildOptions } from "./reporting.js";
 import {
   buildVitestReporterExecutionReport,
   resetVitestReporterRecords,
@@ -15,8 +16,7 @@ import {
 export const DEFAULT_HISTORY_FILE_LIMIT = 3;
 
 export interface MagpieVitestReporterOptions
-  extends ReportBuildOptions<Record<string, unknown>>,
-    VitestReporterBridgeOptions {
+  extends ReportBuildOptions<Record<string, unknown>>, VitestReporterBridgeOptions {
   readonly jsonOutputFile?: string;
   readonly jsonArchiveDirectory?: string;
   readonly jsonHistoryLimit?: number;
@@ -85,26 +85,43 @@ export class MagpieVitestReporter implements Reporter {
         ...(this.options.spacing !== undefined ? { spacing: this.options.spacing } : {}),
       });
 
-      const archiveDirectory = this.options.jsonArchiveDirectory ?? join(dirname(this.options.jsonOutputFile), "history");
-      await writeJsonReport(join(archiveDirectory, createTimestampedReportFileName(report.generatedAt, ".json")), report, {
-        ...(this.options.spacing !== undefined ? { spacing: this.options.spacing } : {}),
-      });
+      const archiveDirectory =
+        this.options.jsonArchiveDirectory ?? join(dirname(this.options.jsonOutputFile), "history");
+      await writeJsonReport(
+        join(archiveDirectory, createTimestampedReportFileName(report.generatedAt, ".json")),
+        report,
+        {
+          ...(this.options.spacing !== undefined ? { spacing: this.options.spacing } : {}),
+        },
+      );
 
-      await pruneArchiveDirectory(archiveDirectory, this.options.jsonHistoryLimit ?? DEFAULT_HISTORY_FILE_LIMIT);
+      await pruneArchiveDirectory(
+        archiveDirectory,
+        this.options.jsonHistoryLimit ?? DEFAULT_HISTORY_FILE_LIMIT,
+      );
     }
 
     if (this.options.htmlOutputFile) {
       await writeHtmlReport(this.options.htmlOutputFile, report);
 
-      const archiveDirectory = this.options.htmlArchiveDirectory ?? join(dirname(this.options.htmlOutputFile), "history");
-      await writeHtmlReport(join(archiveDirectory, createTimestampedReportFileName(report.generatedAt, ".html")), report);
+      const archiveDirectory =
+        this.options.htmlArchiveDirectory ?? join(dirname(this.options.htmlOutputFile), "history");
+      await writeHtmlReport(
+        join(archiveDirectory, createTimestampedReportFileName(report.generatedAt, ".html")),
+        report,
+      );
 
-      await pruneArchiveDirectory(archiveDirectory, this.options.htmlHistoryLimit ?? DEFAULT_HISTORY_FILE_LIMIT);
+      await pruneArchiveDirectory(
+        archiveDirectory,
+        this.options.htmlHistoryLimit ?? DEFAULT_HISTORY_FILE_LIMIT,
+      );
     }
 
     if (this.options.junitOutputFile) {
       await writeJUnitReport(this.options.junitOutputFile, report, {
-        ...(this.options.junitSuiteName !== undefined ? { suiteName: this.options.junitSuiteName } : {}),
+        ...(this.options.junitSuiteName !== undefined
+          ? { suiteName: this.options.junitSuiteName }
+          : {}),
       });
     }
   }

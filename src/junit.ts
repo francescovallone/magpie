@@ -8,7 +8,9 @@ import {
   type StoryReport,
 } from "./reporting.js";
 
-export interface JUnitReporterOptions<TContext extends object> extends ReportBuildOptions<TContext> {
+export interface JUnitReporterOptions<
+  TContext extends object,
+> extends ReportBuildOptions<TContext> {
   readonly outputPath: string;
   /** Name of the root `<testsuites>` element. Defaults to `"magpie"`. */
   readonly suiteName?: string;
@@ -122,7 +124,9 @@ export function formatExecutionRunReportAsJUnitXml(
   const suiteName = options.suiteName ?? "magpie";
   const allScenarios = report.stories.flatMap((story) => story.scenarios);
   const counts = countScenarios(allScenarios);
-  const suites = report.stories.map((story) => renderTestSuite(story, report.generatedAt)).join("\n");
+  const suites = report.stories
+    .map((story) => renderTestSuite(story, report.generatedAt))
+    .join("\n");
 
   return (
     '<?xml version="1.0" encoding="UTF-8"?>\n' +

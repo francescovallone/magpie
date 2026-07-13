@@ -40,7 +40,9 @@ function normalizeStory(story?: StoryReference): StoryReference | undefined {
   };
 }
 
-export function getVitestReporterRecordsDirectory(options: VitestReporterBridgeOptions = {}): string {
+export function getVitestReporterRecordsDirectory(
+  options: VitestReporterBridgeOptions = {},
+): string {
   return options.recordsDirectory ?? DEFAULT_RECORDS_DIRECTORY;
 }
 

@@ -11,15 +11,7 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "rootDir": ".",
-    "types": [
-      "node",
-      "vitest/globals"
-    ]
+    "types": ["node", "vitest/globals"]
   },
-  "include": [
-    "src/**/*.ts",
-    "tests/**/*.ts",
-    "acceptance/**/*.ts",
-    "vitest.config.ts"
-  ]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "acceptance/**/*.ts", "vitest.config.ts"]
 }

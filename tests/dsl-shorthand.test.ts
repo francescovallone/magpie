@@ -107,9 +107,9 @@ describe("builder shorthand", () => {
 
   it("throws when the shorthand is missing its execute function", () => {
     const builder = scenario("broken", "Broken");
-    expect(() => (builder.given as unknown as (name: string) => unknown)("no executor")).toThrowError(
-      /missing its execute function/,
-    );
+    expect(() =>
+      (builder.given as unknown as (name: string) => unknown)("no executor"),
+    ).toThrowError(/missing its execute function/);
   });
 
   it("cleanup shorthand keeps the cleanup lifecycle", () => {

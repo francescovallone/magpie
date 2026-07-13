@@ -67,7 +67,10 @@ describe("MagpieVitestReporter", () => {
 
     const json = JSON.parse(await readFile(jsonOutputFile, "utf8"));
     const archivedFiles = await readFile(
-      join(jsonArchiveDirectory, `${new Date(json.generatedAt).toISOString().replace(/[:.]/g, "-")}.json`),
+      join(
+        jsonArchiveDirectory,
+        `${new Date(json.generatedAt).toISOString().replace(/[:.]/g, "-")}.json`,
+      ),
       "utf8",
     );
 
@@ -96,7 +99,11 @@ describe("MagpieVitestReporter", () => {
     });
 
     await mkdir(jsonArchiveDirectory, { recursive: true });
-    for (const name of ["2020-01-01T00-00-00-000Z.json", "2020-01-02T00-00-00-000Z.json", "2020-01-03T00-00-00-000Z.json"]) {
+    for (const name of [
+      "2020-01-01T00-00-00-000Z.json",
+      "2020-01-02T00-00-00-000Z.json",
+      "2020-01-03T00-00-00-000Z.json",
+    ]) {
       await writeFile(join(jsonArchiveDirectory, name), "{}", "utf8");
     }
 

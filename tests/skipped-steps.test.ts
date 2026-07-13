@@ -42,9 +42,9 @@ describe("skipped steps in reports", () => {
       ["audit log entry is written", "skipped"],
       ["session is wiped", "passed"],
     ]);
-    expect(report.steps.filter((step) => step.status === "skipped").every((step) => step.duration === 0)).toBe(
-      true,
-    );
+    expect(
+      report.steps.filter((step) => step.status === "skipped").every((step) => step.duration === 0),
+    ).toBe(true);
   });
 
   it("keeps the full shape when the scenario passes (no skipped steps)", async () => {

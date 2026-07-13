@@ -96,17 +96,14 @@ export {
   createAcceptanceTraceabilityReport,
   DEFAULT_QUARANTINE_TAGS,
   createConsoleReporter,
-  createHtmlReporter,
   createJsonReporter,
   createReporter,
   createReportingHooks,
   createScenarioReport,
   createStoryReport,
   formatExecutionRunReport,
-  formatExecutionRunReportAsHtml,
   formatStoryReport,
   resolveAcceptanceIds,
-  writeHtmlReport,
   type AcceptanceTraceabilityReport,
   type AcceptanceReporter,
   type AttachmentReportingOptions,
@@ -114,7 +111,6 @@ export {
   type ErrorReportingOptions,
   type ExecutionRunReport,
   type ExecutionRunTotals,
-  type HtmlReporterOptions,
   type JsonReporterOptions,
   type LogReportingOptions,
   type ReportAttachment,
@@ -125,6 +121,21 @@ export {
   type ScenarioExecutionRecord,
   type StoryReport,
 } from "./reporting.js";
+export {
+  createHtmlReporter,
+  formatExecutionRunReportAsHtml,
+  writeHtmlReport,
+  type HtmlReporterOptions,
+} from "./html.js";
+export {
+  createPlaywrightHooks,
+  type CreatePlaywrightHooksOptions,
+  type PlaywrightBrowser,
+  type PlaywrightBrowserContext,
+  type PlaywrightHooks,
+  type PlaywrightPage,
+  type PlaywrightScenarioContext,
+} from "./playwright.js";
 export {
   registerFilteredStory,
   registerScenario,

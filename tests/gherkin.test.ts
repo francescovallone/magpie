@@ -210,7 +210,13 @@ Feature: Messaging
 
     expect(result.success).toBe(true);
     expect(capturedDocStrings).toEqual(["hello world"]);
-    expect(capturedTables).toEqual([[ ["name", "role"], ["alice", "admin"], ["bob", "user"] ]]);
+    expect(capturedTables).toEqual([
+      [
+        ["name", "role"],
+        ["alice", "admin"],
+        ["bob", "user"],
+      ],
+    ]);
     expect(capturedArguments).toEqual([true]);
   });
 

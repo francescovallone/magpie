@@ -1,10 +1,5 @@
 import { extname } from "node:path";
-import type {
-  Scenario,
-  ScenarioStep,
-  StepExecutionApi,
-  SubScenario,
-} from "./domain.js";
+import type { Scenario, ScenarioStep, StepExecutionApi, SubScenario } from "./domain.js";
 
 export interface ExecutionLogEntry {
   readonly timestamp: number;
@@ -118,7 +113,10 @@ export interface ScenarioBatchExecutionResult<TContext extends object> {
 }
 
 export interface ExecutionHooks<TContext extends object> {
-  readonly beforeScenario?: (scenario: Scenario<TContext>, context: TContext) => Promise<void> | void;
+  readonly beforeScenario?: (
+    scenario: Scenario<TContext>,
+    context: TContext,
+  ) => Promise<void> | void;
   readonly afterScenario?: (
     scenario: Scenario<TContext>,
     context: TContext,
@@ -144,8 +142,9 @@ export interface ExecuteScenarioOptions<TContext extends object> {
   readonly retries?: number;
 }
 
-export interface ExecuteScenariosOptions<TContext extends object>
-  extends ExecuteScenarioOptions<TContext> {
+export interface ExecuteScenariosOptions<
+  TContext extends object,
+> extends ExecuteScenarioOptions<TContext> {
   readonly maxConcurrency?: number;
 }
 
@@ -164,7 +163,9 @@ export function mergeExecutionHooks<TContext extends object>(
 
   const beforeScenarioHooks = definedHookSets
     .map((hookSet) => hookSet.beforeScenario)
-    .filter((hook): hook is NonNullable<ExecutionHooks<TContext>["beforeScenario"]> => hook !== undefined);
+    .filter(
+      (hook): hook is NonNullable<ExecutionHooks<TContext>["beforeScenario"]> => hook !== undefined,
+    );
   if (beforeScenarioHooks.length) {
     Object.assign(merged, {
       async beforeScenario(scenario: Scenario<TContext>, context: TContext) {
@@ -177,7 +178,9 @@ export function mergeExecutionHooks<TContext extends object>(
 
   const afterScenarioHooks = definedHookSets
     .map((hookSet) => hookSet.afterScenario)
-    .filter((hook): hook is NonNullable<ExecutionHooks<TContext>["afterScenario"]> => hook !== undefined);
+    .filter(
+      (hook): hook is NonNullable<ExecutionHooks<TContext>["afterScenario"]> => hook !== undefined,
+    );
   if (afterScenarioHooks.length) {
     Object.assign(merged, {
       async afterScenario(
@@ -194,7 +197,9 @@ export function mergeExecutionHooks<TContext extends object>(
 
   const beforeStepHooks = definedHookSets
     .map((hookSet) => hookSet.beforeStep)
-    .filter((hook): hook is NonNullable<ExecutionHooks<TContext>["beforeStep"]> => hook !== undefined);
+    .filter(
+      (hook): hook is NonNullable<ExecutionHooks<TContext>["beforeStep"]> => hook !== undefined,
+    );
   if (beforeStepHooks.length) {
     Object.assign(merged, {
       async beforeStep(step: ScenarioStep<TContext>, context: TContext) {
@@ -207,10 +212,16 @@ export function mergeExecutionHooks<TContext extends object>(
 
   const afterStepHooks = definedHookSets
     .map((hookSet) => hookSet.afterStep)
-    .filter((hook): hook is NonNullable<ExecutionHooks<TContext>["afterStep"]> => hook !== undefined);
+    .filter(
+      (hook): hook is NonNullable<ExecutionHooks<TContext>["afterStep"]> => hook !== undefined,
+    );
   if (afterStepHooks.length) {
     Object.assign(merged, {
-      async afterStep(step: ScenarioStep<TContext>, context: TContext, result: StepExecutionResult) {
+      async afterStep(
+        step: ScenarioStep<TContext>,
+        context: TContext,
+        result: StepExecutionResult,
+      ) {
         for (const hook of afterStepHooks) {
           await hook(step, context, result);
         }
@@ -241,7 +252,9 @@ function serializeError(error: unknown): SerializedError {
   };
 }
 
-function createContext<TContext extends object>(options: ExecuteScenarioOptions<TContext>): TContext {
+function createContext<TContext extends object>(
+  options: ExecuteScenarioOptions<TContext>,
+): TContext {
   if (options.context) {
     return options.context;
   }
@@ -324,9 +337,7 @@ function createScenarioExecutionNodes<TContext extends object>(
       const dependencyNode = nodes.get(dependencyId);
 
       if (!dependencyNode) {
-        throw new Error(
-          `Scenario ${node.scenario.id} depends on missing scenario ${dependencyId}`,
-        );
+        throw new Error(`Scenario ${node.scenario.id} depends on missing scenario ${dependencyId}`);
       }
 
       dependencyNode.dependents.push(node.scenario.id);

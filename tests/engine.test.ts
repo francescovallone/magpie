@@ -41,9 +41,7 @@ describe("executeScenario retries", () => {
         afterScenario: (_scenario, _context, scenarioResult) => {
           afterScenarioResults.push({
             success: scenarioResult.success,
-            ...(scenarioResult.attempts !== undefined
-              ? { attempts: scenarioResult.attempts }
-              : {}),
+            ...(scenarioResult.attempts !== undefined ? { attempts: scenarioResult.attempts } : {}),
           });
         },
       },
@@ -89,9 +87,7 @@ describe("executeScenario retries", () => {
       id: "stable",
       title: "Stable scenario",
       retries: 3,
-      steps: [
-        { id: "then-passes", name: "passes", type: "then", execute: () => undefined },
-      ],
+      steps: [{ id: "then-passes", name: "passes", type: "then", execute: () => undefined }],
     });
 
     const result = await executeScenario(subject);
@@ -574,7 +570,10 @@ describe("sub-scenarios", () => {
 
     expect(built.subScenarios).toHaveLength(2);
     expect(built.subScenarios?.map((sub) => sub.id)).toEqual(["multi-given-01", "multi-given-02"]);
-    expect(built.subScenarios?.map((sub) => sub.acceptance)).toEqual([["AC-001-01"], ["AC-001-02"]]);
+    expect(built.subScenarios?.map((sub) => sub.acceptance)).toEqual([
+      ["AC-001-01"],
+      ["AC-001-02"],
+    ]);
     expect(built.subScenarios?.[0]?.steps.map((step) => step.id)).toEqual([
       "given-a",
       "when-a",
@@ -598,7 +597,10 @@ describe("sub-scenarios", () => {
       .build();
 
     expect(built.subScenarios?.map((sub) => sub.id)).toEqual(["AC-CUSTOM", "custom-given-02"]);
-    expect(built.subScenarios?.map((sub) => sub.acceptance)).toEqual([["AC-CUSTOM"], ["AC-001-02"]]);
+    expect(built.subScenarios?.map((sub) => sub.acceptance)).toEqual([
+      ["AC-CUSTOM"],
+      ["AC-001-02"],
+    ]);
   });
 
   it("shares setup steps across sub-scenarios and executes each independently, failing the parent on any failure", async () => {
@@ -753,11 +755,10 @@ describe("reporting and filtering", () => {
         },
       ],
     });
-    const traceability = createAcceptanceTraceabilityReport([scenarioA, scenarioB], [
-      "AUTH-001",
-      "AUTH-002",
-      "AUTH-007",
-    ]);
+    const traceability = createAcceptanceTraceabilityReport(
+      [scenarioA, scenarioB],
+      ["AUTH-001", "AUTH-002", "AUTH-007"],
+    );
     const filter = createScenarioFilter({ acceptance: ["AUTH-*"] });
 
     expect(filter(scenarioA)).toBe(true);

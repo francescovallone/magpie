@@ -164,9 +164,7 @@ export interface OutputResolutionOptions {
  * `MAGPIE_OUTPUT` environment variable. Named `--output` (not `--reporter`)
  * so it never collides with Vitest's own built-in `--reporter` CLI flag.
  */
-export function resolveOutputKinds(
-  options: OutputResolutionOptions = {},
-): ReadonlySet<string> {
+export function resolveOutputKinds(options: OutputResolutionOptions = {}): ReadonlySet<string> {
   const argv = options.argv ?? [];
   const env = options.env ?? {};
   const prefix = options.envPrefix ?? "MAGPIE";
@@ -194,10 +192,7 @@ export function resolveOutputKinds(
   return new Set(kinds.map((kind) => kind.toLowerCase()));
 }
 
-export function isOutputEnabled(
-  kind: string,
-  options: OutputResolutionOptions = {},
-): boolean {
+export function isOutputEnabled(kind: string, options: OutputResolutionOptions = {}): boolean {
   return resolveOutputKinds(options).has(kind.toLowerCase());
 }
 

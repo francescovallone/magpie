@@ -3,8 +3,10 @@ import { createGherkinScenarios, type GherkinImportOptions } from "./gherkin.js"
 
 export type AcceptanceCriteriaContentType = "markdown" | "html";
 
-export interface AcceptanceCriteriaImportOptions<TContext extends object>
-  extends Omit<GherkinImportOptions<TContext>, "uri"> {
+export interface AcceptanceCriteriaImportOptions<TContext extends object> extends Omit<
+  GherkinImportOptions<TContext>,
+  "uri"
+> {
   readonly uri?: string;
   /** `"html"` or `"markdown"`. Auto-detected from the content when omitted. */
   readonly contentType?: AcceptanceCriteriaContentType;
@@ -140,7 +142,9 @@ function splitIntoScenarioBlocks(text: string): ReadonlyArray<ParsedScenarioBloc
 
     if (titleMatch) {
       const title = titleMatch[1]?.trim();
-      current = title ? { title, stepLines: [], hasGiven: false } : { stepLines: [], hasGiven: false };
+      current = title
+        ? { title, stepLines: [], hasGiven: false }
+        : { stepLines: [], hasGiven: false };
       blocks.push(current);
       continue;
     }

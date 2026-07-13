@@ -1,0 +1,4 @@
+dist
+.magpie
+package-lock.json
+CHANGELOG.md

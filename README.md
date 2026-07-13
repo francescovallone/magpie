@@ -38,6 +38,7 @@ Scenario data ──▶ execution engine ──▶ Vitest adapter ──▶ repo
   - [Attachments in reports](#attachments-in-reports)
 - [Retries and quarantine](#retries-and-quarantine)
 - [Hooks](#hooks)
+- [Playwright](#playwright)
 - [Acceptance traceability](#acceptance-traceability)
 - [Recipes](#recipes)
 - [Contributing](#contributing)
@@ -147,14 +148,14 @@ From here: [filter scenarios from the CLI](#filtering-from-the-cli), [import Ghe
 
 ## Core concepts
 
-| Concept | What it is | Where it appears |
-| --- | --- | --- |
-| **Scenario** | An immutable, executable acceptance criterion: id, title, tags, acceptance ids, and ordered steps. | `defineAcceptanceScenario()`, `scenario()` builder |
-| **Step** | One unit of work inside a scenario (`given`/`when`/`then`/`setup`/`cleanup`). Failing = throwing. | `steps: [...]`, `defineStep()` |
-| **Context** | A plain object threaded through every step of one scenario execution. You type it. | `execute: (context, api) => ...` |
-| **Story** | A named group of scenarios (maps to a Gherkin `Feature`). | `defineStory()` |
-| **Acceptance id** | A requirement reference (e.g. `AUTH-001`) attached to scenarios; reports show which ids are implemented and which are missing. | `acceptance: [...]`, traceability report |
-| **Reporter** | Collects scenario results and emits console text, JSON, or HTML. | `magpiePlugin()`, `createConsoleReporter()`, ... |
+| Concept           | What it is                                                                                                                     | Where it appears                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| **Scenario**      | An immutable, executable acceptance criterion: id, title, tags, acceptance ids, and ordered steps.                             | `defineAcceptanceScenario()`, `scenario()` builder |
+| **Step**          | One unit of work inside a scenario (`given`/`when`/`then`/`setup`/`cleanup`). Failing = throwing.                              | `steps: [...]`, `defineStep()`                     |
+| **Context**       | A plain object threaded through every step of one scenario execution. You type it.                                             | `execute: (context, api) => ...`                   |
+| **Story**         | A named group of scenarios (maps to a Gherkin `Feature`).                                                                      | `defineStory()`                                    |
+| **Acceptance id** | A requirement reference (e.g. `AUTH-001`) attached to scenarios; reports show which ids are implemented and which are missing. | `acceptance: [...]`, traceability report           |
+| **Reporter**      | Collects scenario results and emits console text, JSON, or HTML.                                                               | `magpiePlugin()`, `createConsoleReporter()`, ...   |
 
 Description, execution, and reporting are deliberately separate: scenarios are pure data, so the same scenario can run through Vitest today and through another runner tomorrow, and reports are built from results rather than from runner internals.
 
@@ -211,8 +212,14 @@ The standard step types are `setup`, `given`, `when`, `then`, and `cleanup`. All
 steps: [
   { id: "given-db", name: "database is seeded", type: "given", execute: seed },
   { id: "then-query", name: "query returns rows", type: "then", execute: assertRows },
-  { id: "cleanup-db", name: "database is wiped", type: "cleanup", lifecycle: "cleanup", execute: wipe },
-]
+  {
+    id: "cleanup-db",
+    name: "database is wiped",
+    type: "cleanup",
+    lifecycle: "cleanup",
+    execute: wipe,
+  },
+];
 ```
 
 Custom step types can be registered with `createStepTypeRegistry()` / `standardStepTypes.extend()` if your domain needs more than the Gherkin five.
@@ -299,13 +306,13 @@ registerFilteredStory(story, {
 });
 ```
 
-| CLI flag | Environment variable | Matches |
-| --- | --- | --- |
-| `--tag auth` | `MAGPIE_TAGS=auth,critical` | scenario tags |
-| `--acceptance AUTH-*` | `MAGPIE_ACCEPTANCE=AUTH-*` | acceptance ids (glob `*` supported) |
-| `--story Authentication` | `MAGPIE_STORY=Authentication` | story title |
-| `--scenario "Registered user logs in"` | `MAGPIE_SCENARIO=...` | scenario title |
-| `--regex critical` / `--grep critical` | `MAGPIE_REGEX=critical` | id, title, description, tags, acceptance, story |
+| CLI flag                               | Environment variable          | Matches                                         |
+| -------------------------------------- | ----------------------------- | ----------------------------------------------- |
+| `--tag auth`                           | `MAGPIE_TAGS=auth,critical`   | scenario tags                                   |
+| `--acceptance AUTH-*`                  | `MAGPIE_ACCEPTANCE=AUTH-*`    | acceptance ids (glob `*` supported)             |
+| `--story Authentication`               | `MAGPIE_STORY=Authentication` | story title                                     |
+| `--scenario "Registered user logs in"` | `MAGPIE_SCENARIO=...`         | scenario title                                  |
+| `--regex critical` / `--grep critical` | `MAGPIE_REGEX=critical`       | id, title, description, tags, acceptance, story |
 
 **The easiest way to pass these flags is the `magpie` CLI**, a thin wrapper installed with the package. It extracts the Magpie flags, converts them to `MAGPIE_*` environment variables (the transport that reliably reaches Vitest's worker processes), and forwards everything else to Vitest unchanged — no `--` passthrough needed:
 
@@ -338,10 +345,10 @@ const result = await executeScenario(login, {
   createContext: () => ({}),
 });
 
-result.success;       // boolean
-result.steps;         // per-step status, duration, logs, error
-result.failure;       // which step threw, serialized error, original cause
-result.logs;          // everything emitted via api.log
+result.success; // boolean
+result.steps; // per-step status, duration, logs, error
+result.failure; // which step threw, serialized error, original cause
+result.logs; // everything emitted via api.log
 ```
 
 ### Batch execution and dependencies
@@ -436,7 +443,11 @@ steps
 
 ```ts
 // features.acceptance.test.ts — one story per .feature file, recursively
-import { createGherkinStoriesFromDirectory, registerFilteredStory, resolveScenarioFilter } from "@avesbox/magpie";
+import {
+  createGherkinStoriesFromDirectory,
+  registerFilteredStory,
+  resolveScenarioFilter,
+} from "@avesbox/magpie";
 import { steps } from "./steps/registry.js";
 
 const stories = await createGherkinStoriesFromDirectory("./features", { stepDefinitions: steps });
@@ -482,7 +493,7 @@ The importer:
 ```ts
 const story = await createGherkinStoryFromFile("./features/payments.feature", {
   acceptanceTagPattern: /acceptance\(([^)]+)\)/, // @acceptance(PAY-123)
-  acceptanceMetadataPattern: /PAY-\d+/g,          // "Acceptance: PAY-123" in descriptions
+  acceptanceMetadataPattern: /PAY-\d+/g, // "Acceptance: PAY-123" in descriptions
   stepDefinitions,
 });
 ```
@@ -802,6 +813,44 @@ await executeScenario(login, { hooks });
 
 The same `hooks` option is accepted by `executeScenarios()` and by the Vitest adapter functions.
 
+## Playwright
+
+`createPlaywrightHooks()` manages a Playwright page per scenario: a fresh browser context and page are created before each scenario (on `context.page`, `context.browserContext`, `context.browser`) and closed after it, and when a scenario fails a full-page screenshot is attached to the failing step. Magpie has no dependency on Playwright — you pass the launch function:
+
+```ts
+import { chromium } from "playwright";
+import {
+  createPlaywrightHooks,
+  defineStory,
+  registerStory,
+  scenario,
+  type PlaywrightScenarioContext,
+} from "@avesbox/magpie";
+
+const playwright = createPlaywrightHooks<PlaywrightScenarioContext>({
+  launch: () => chromium.launch(),
+  contextOptions: { viewport: { width: 1280, height: 720 } },
+});
+
+const login = scenario<PlaywrightScenarioContext>("Registered user logs in")
+  .given("the login page is open", async ({ page }) => {
+    await page!.goto("https://example.test/login");
+  })
+  .then("the form is visible", async ({ page }) => {
+    await page!.locator("form#login").waitFor();
+  })
+  .build();
+
+registerStory(defineStory({ title: "Authentication", scenarios: [login] }), {
+  hooks: playwright,
+  reportToVitest: { attachments: { enabled: true } }, // failure screenshots land in reports
+});
+```
+
+The browser is launched lazily once and shared across scenarios; call `playwright.close()` when the run is over (e.g. in a Vitest `afterAll`). When combining with other hooks, put the Playwright hooks first — `mergeExecutionHooks(playwright, otherHooks)` — so the failure screenshot is captured before reporters record the result. Disable screenshots with `screenshotOnFailure: false`.
+
+Extend `PlaywrightScenarioContext` for your own context fields: `interface MyContext extends PlaywrightScenarioContext { user?: string }`.
+
 ## Acceptance traceability
 
 Give the reporter the full list of acceptance ids you expect to be covered, and the report splits them into implemented and missing:
@@ -815,7 +864,7 @@ const reporter = createConsoleReporter({
 
 const report = await reporter.flush();
 report.traceability.implemented; // e.g. ["AUTH-001", "AUTH-002"]
-report.traceability.missing;     // e.g. ["AUTH-007"]
+report.traceability.missing; // e.g. ["AUTH-007"]
 ```
 
 To fail CI when requirements have no covering scenario:
@@ -869,4 +918,4 @@ Project scripts:
 
 The repository's GitHub Actions workflow runs typecheck and tests, and uploads `.magpie/reports/` as a build artifact — the latest report at `.magpie/reports/latest.json`, with history under `.magpie/reports/history/`.
 
-Implemented today: immutable scenario/story model, runner-agnostic engine with dependencies, retries, and quarantine; Vitest adapter and reporter; `magpie` CLI wrapper; Gherkin importer with stable ids, step registries, directory discovery, and undefined-step snippets; filtering; console/JSON/HTML/JUnit reporting with acceptance traceability, Playwright. Not implemented yet: live dashboards or other non-Vitest adapters.
+Implemented today: immutable scenario/story model, runner-agnostic engine with dependencies, retries, and quarantine; Vitest adapter and reporter; `magpie` CLI wrapper; Gherkin importer with stable ids, step registries, directory discovery, and undefined-step snippets; filtering; console/JSON/HTML/JUnit reporting with acceptance traceability, logs and attachments in reports, acceptance-criteria import from DevOps work items, Playwright per-scenario page hooks with failure screenshots. Not implemented yet: live dashboards or other non-Vitest adapters.

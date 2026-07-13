@@ -88,9 +88,12 @@ Scenario: Invalid password
   });
 
   it("normalizes a custom parser's single-scenario return value into a list", () => {
-    const scenario = createGherkinScenarios("Feature: F\n\nScenario: S\n  Given a registered user exists\n", {
-      stepDefinitions,
-    })[0]!;
+    const scenario = createGherkinScenarios(
+      "Feature: F\n\nScenario: S\n  Given a registered user exists\n",
+      {
+        stepDefinitions,
+      },
+    )[0]!;
 
     const scenarios = createScenariosFromAcceptanceCriteria("irrelevant content", {
       stepDefinitions,
@@ -112,7 +115,9 @@ describe("normalizeAcceptanceCriteriaContent", () => {
     const markdown = "- Given a thing\n- When it happens\n- Then it works";
     const html = "<ul><li>Given a thing</li><li>When it happens</li><li>Then it works</li></ul>";
 
-    expect(normalizeAcceptanceCriteriaContent(html)).toBe(normalizeAcceptanceCriteriaContent(markdown));
+    expect(normalizeAcceptanceCriteriaContent(html)).toBe(
+      normalizeAcceptanceCriteriaContent(markdown),
+    );
   });
 
   it("decodes common HTML entities", () => {

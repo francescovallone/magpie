@@ -2,7 +2,7 @@ import type { Plugin } from "vitest/config";
 
 import { createMagpieVitestReporter, type MagpieVitestReporterOptions } from "./vitest-reporter.js";
 
-export interface MagpiePluginOptions extends MagpieVitestReporterOptions {}
+export type MagpiePluginOptions = MagpieVitestReporterOptions;
 
 /**
  * Vite/Vitest plugin that registers the Magpie reporter without requiring

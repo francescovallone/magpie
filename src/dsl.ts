@@ -33,12 +33,18 @@ export interface ScenarioBuilder<TContext extends object> {
   setup(step: BuilderStepInput<TContext>): ScenarioBuilder<TContext>;
   setup(name: string, execute: StepExecutor<TContext>): ScenarioBuilder<TContext>;
   given(step: BuilderStepInput<TContext>, options?: GivenOptions): ScenarioBuilder<TContext>;
-  given(name: string, execute: StepExecutor<TContext>, options?: GivenOptions): ScenarioBuilder<TContext>;
+  given(
+    name: string,
+    execute: StepExecutor<TContext>,
+    options?: GivenOptions,
+  ): ScenarioBuilder<TContext>;
   when(step: BuilderStepInput<TContext>): ScenarioBuilder<TContext>;
   when(name: string, execute: StepExecutor<TContext>): ScenarioBuilder<TContext>;
   then(step: BuilderStepInput<TContext>): ScenarioBuilder<TContext>;
   then(name: string, execute: StepExecutor<TContext>): ScenarioBuilder<TContext>;
-  cleanup(step: Omit<StepDefinitionInput<TContext>, "type" | "lifecycle">): ScenarioBuilder<TContext>;
+  cleanup(
+    step: Omit<StepDefinitionInput<TContext>, "type" | "lifecycle">,
+  ): ScenarioBuilder<TContext>;
   cleanup(name: string, execute: StepExecutor<TContext>): ScenarioBuilder<TContext>;
   /**
    * Controls whether multiple "given" steps split the scenario into
@@ -153,11 +159,16 @@ export function scenario<TContext extends object = Record<string, unknown>>(
         stepOrName,
         usingShorthand ? (executeOrOptions as StepExecutor<TContext>) : undefined,
       );
-      const options = usingShorthand ? maybeOptions : (executeOrOptions as GivenOptions | undefined);
+      const options = usingShorthand
+        ? maybeOptions
+        : (executeOrOptions as GivenOptions | undefined);
       const acceptance = options?.acceptance;
 
       return builder.step(
-        createTypedStep("given", acceptance !== undefined ? { ...stepInput, acceptance } : stepInput),
+        createTypedStep(
+          "given",
+          acceptance !== undefined ? { ...stepInput, acceptance } : stepInput,
+        ),
       );
     },
     when(stepOrName: BuilderStepInput<TContext> | string, execute?: StepExecutor<TContext>) {
