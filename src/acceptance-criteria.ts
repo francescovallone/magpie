@@ -52,7 +52,39 @@ const HTML_ENTITIES: Readonly<Record<string, string>> = {
 };
 
 function decodeHtmlEntities(text: string): string {
-  return text.replace(/&[a-z#0-9]+;/gi, (entity) => HTML_ENTITIES[entity.toLowerCase()] ?? entity);
+  return text.replace(/&[a-z#0-9]+;/gi, (entity) => {
+    const named = HTML_ENTITIES[entity.toLowerCase()];
+
+    if (named !== undefined) {
+      return named;
+    }
+
+    const numeric = entity.match(/^&#(x?)([0-9a-f]+);$/i);
+
+    if (numeric) {
+      const codePoint = Number.parseInt(numeric[2]!, numeric[1] ? 16 : 10);
+      return Number.isNaN(codePoint) ? entity : String.fromCodePoint(codePoint);
+    }
+
+    return entity;
+  });
+}
+
+/**
+ * Rich-text editors (Azure DevOps included) silently replace typed
+ * characters: straight quotes become curly, spaces become non-breaking.
+ * Both are invisible in an "undefined step" listing yet break Cucumber
+ * expression matching, so they are normalized back before parsing.
+ *
+ * The first character class is not blank: it contains the literal characters
+ * U+00A0 (no-break space), U+2007 (figure space), and U+202F (narrow
+ * no-break space).
+ */
+function normalizeTypography(text: string): string {
+  return text
+    .replace(/[   ]/g, " ")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"');
 }
 
 /**
@@ -103,7 +135,7 @@ export function normalizeAcceptanceCriteriaContent(
 ): string {
   const type = contentType ?? detectContentType(content);
   const plainText = type === "html" ? stripHtml(content) : normalizeMarkdownBullets(content);
-  return collapseBlankLines(plainText);
+  return collapseBlankLines(normalizeTypography(plainText));
 }
 
 const STEP_LINE_PATTERN = /^-?\s*(Given|When|Then|And|But)\b[:\s]+(.*)$/i;

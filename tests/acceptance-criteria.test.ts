@@ -37,6 +37,37 @@ Scenario: Invalid password
     expect(scenarios[1]?.title).toBe("Invalid password");
   });
 
+  it("normalizes rich-text typography: non-breaking spaces, curly quotes, numeric entities", () => {
+    // "the cart" (NBSP), curly apostrophe (’), curly double quotes
+    // (“/”), and an &#8217; numeric entity — the transformations
+    // Azure DevOps' rich-text editor applies to typed text.
+    const html = [
+      "<ul>",
+      "<li>Given items are in the cart</li>",
+      "<li>When the customer’s order is placed</li>",
+      "<li>Then the receipt says “paid”</li>",
+      "<li>And the buyer&#8217;s email is sent</li>",
+      "</ul>",
+    ].join("");
+
+    const scenarios = createScenariosFromAcceptanceCriteria(html, {
+      stepDefinitions: [
+        defineGherkinStep({ expression: "items are in the cart", execute: () => {} }),
+        defineGherkinStep({ expression: "the customer's order is placed", execute: () => {} }),
+        defineGherkinStep({ expression: "the receipt says {string}", execute: () => {} }),
+        defineGherkinStep({ expression: "the buyer's email is sent", execute: () => {} }),
+      ],
+    });
+
+    expect(scenarios).toHaveLength(1);
+    expect(scenarios[0]?.steps.map((step) => step.name)).toEqual([
+      "items are in the cart",
+      "the customer's order is placed",
+      'the receipt says "paid"',
+      "the buyer's email is sent",
+    ]);
+  });
+
   it("parses equivalent HTML acceptance criteria identically to Markdown", () => {
     const html = `
       <p><strong>Scenario: Successful login</strong></p>
