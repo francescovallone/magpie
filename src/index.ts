@@ -22,6 +22,7 @@ export {
   type ExecutionAttachment,
   type ExecutionHooks,
   mergeExecutionHooks,
+  ScenarioSkip,
   type ScenarioBatchExecutionResult,
   type ScenarioExecutionResult,
   type SkippedScenarioExecutionResult,

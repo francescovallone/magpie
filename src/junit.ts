@@ -48,7 +48,7 @@ function countScenarios(scenarios: ReadonlyArray<ScenarioReport>): SuiteCounts {
   let skipped = 0;
 
   for (const scenario of scenarios) {
-    if (scenario.quarantined && scenario.status === "failed") {
+    if (scenario.status === "skipped" || (scenario.quarantined && scenario.status === "failed")) {
       skipped += 1;
     } else if (scenario.status === "failed") {
       failures += 1;
@@ -74,6 +74,10 @@ function renderAttachmentsSystemOut(scenario: ScenarioReport): string {
 function renderTestCase(scenario: ScenarioReport, storyTitle: string): string {
   const attributes = `classname="${escapeXml(storyTitle)}" name="${escapeXml(scenario.title)}" time="${toSeconds(scenario.duration)}"`;
   const systemOut = renderAttachmentsSystemOut(scenario);
+
+  if (scenario.status === "skipped") {
+    return `    <testcase ${attributes}>\n      <skipped/>${systemOut}\n    </testcase>`;
+  }
 
   if (scenario.quarantined && scenario.status === "failed") {
     return `    <testcase ${attributes}>\n      <skipped message="quarantined: failed but excluded from the run result"/>${systemOut}\n    </testcase>`;

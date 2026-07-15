@@ -31,6 +31,14 @@ function inferAttachmentContentType(name: string): string {
   return ATTACHMENT_CONTENT_TYPES[extname(name).toLowerCase()] ?? "application/octet-stream";
 }
 
+/** Thrown from a step to mark the scenario as skipped instead of failed. */
+export class ScenarioSkip extends Error {
+  constructor(message?: string) {
+    super(message ?? "Scenario skipped");
+    this.name = "ScenarioSkip";
+  }
+}
+
 export interface SerializedError {
   readonly name: string;
   readonly message: string;
@@ -71,6 +79,8 @@ export interface SubScenarioExecutionResult<TContext extends object> {
   readonly failure?: ScenarioFailure<TContext>;
   /** Present when the sub-scenario was retried; total number of attempts executed. */
   readonly attempts?: number;
+  /** Present when a step threw `ScenarioSkip`; the sub-scenario is reported as skipped instead of passed/failed. */
+  readonly skipped?: boolean;
 }
 
 export interface ScenarioExecutionResult<TContext extends object> {
@@ -98,6 +108,8 @@ export interface ScenarioExecutionResult<TContext extends object> {
    * sub-scenario fails, the parent scenario's `success` is `false` too.
    */
   readonly subScenarios?: ReadonlyArray<SubScenarioExecutionResult<TContext>>;
+  /** Present when a step threw `ScenarioSkip`; the scenario is reported as skipped instead of passed/failed. */
+  readonly skipped?: boolean;
 }
 
 export interface SkippedScenarioExecutionResult {
@@ -583,6 +595,7 @@ async function executeScenarioWithSubScenarios<TContext extends object>(
       steps: subResult.steps,
       ...(subResult.failure ? { failure: subResult.failure } : {}),
       ...(subResult.attempts !== undefined ? { attempts: subResult.attempts } : {}),
+      ...(subResult.skipped ? { skipped: true } : {}),
     });
   }
 
@@ -592,6 +605,11 @@ async function executeScenarioWithSubScenarios<TContext extends object>(
     scenarioTitle: scenario.title,
     acceptance: scenario.acceptance,
     success: subResults.every((subResult) => subResult.success),
+    ...(subResults.length > 0 &&
+    subResults.every((subResult) => subResult.success) &&
+    subResults.some((subResult) => subResult.skipped)
+      ? { skipped: true }
+      : {}),
     duration: finishedAt - startedAt,
     startedAt,
     finishedAt,
@@ -735,6 +753,25 @@ async function executeScenarioAttempt<TContext extends object>(
 
       return { result: passedResult };
     } catch (error) {
+      if (error instanceof ScenarioSkip) {
+        const skippedResult: StepExecutionResult = {
+          stepId: step.id,
+          stepName: step.name,
+          type: step.type,
+          lifecycle: step.lifecycle,
+          status: "skipped",
+          duration: now() - stepStartedAt,
+          startedAt: stepStartedAt,
+          finishedAt: now(),
+          logs: stepLogs,
+          attachments: stepAttachments,
+        };
+
+        await options.hooks?.afterStep?.(step, context, skippedResult);
+
+        return { result: skippedResult, cause: error };
+      }
+
       const failedResult: StepExecutionResult = {
         stepId: step.id,
         stepName: step.name,
@@ -768,9 +805,16 @@ async function executeScenarioAttempt<TContext extends object>(
   await options.hooks?.beforeScenario?.(scenario, context);
   createLogger()("scenario.started", { scenarioId: scenario.id });
 
+  let skipped = false;
+
   for (const step of mainSteps) {
     const executed = await runStep(step);
     stepResults.push(executed.result);
+
+    if (executed.result.status === "skipped") {
+      skipped = true;
+      break;
+    }
 
     if (executed.result.status === "failed") {
       failure = {
@@ -830,6 +874,7 @@ async function executeScenarioAttempt<TContext extends object>(
     logs,
     attachments,
     steps: stepResults,
+    ...(skipped ? { skipped: true } : {}),
   };
   return failure ? { ...resultBase, failure } : resultBase;
 }

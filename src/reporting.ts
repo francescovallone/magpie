@@ -51,7 +51,7 @@ export interface ScenarioReport {
   readonly acceptance: ReadonlyArray<string>;
   readonly tags: ReadonlyArray<string>;
   readonly duration: number;
-  readonly status: "passed" | "failed";
+  readonly status: "passed" | "failed" | "skipped";
   readonly error?: string;
   /** Full error (stack when available) regardless of `errors.verbose` — HTML reports show this in a collapsible detail. */
   readonly errorDetail?: string;
@@ -112,6 +112,8 @@ export interface ExecutionRunTotals {
    * both `passedScenarioCount` and `failedScenarioCount`.
    */
   readonly quarantinedScenarioCount: number;
+  /** Number of scenarios that a step skipped via `ScenarioSkip`. Excluded from both `passedScenarioCount` and `failedScenarioCount`. */
+  readonly skippedScenarioCount: number;
   readonly stepCount: number;
   readonly passedStepCount: number;
   readonly failedStepCount: number;
@@ -217,6 +219,7 @@ function createTotals(scenarios: ReadonlyArray<ScenarioReport>): ExecutionRunTot
   );
   const duration = scenarios.reduce((total, scenario) => total + scenario.duration, 0);
   const quarantinedScenarioCount = scenarios.filter((scenario) => scenario.quarantined).length;
+  const skippedScenarioCount = scenarios.filter((scenario) => scenario.status === "skipped").length;
   const passedScenarioCount = scenarios.filter(
     (scenario) => scenario.status === "passed" && !scenario.quarantined,
   ).length;
@@ -229,6 +232,7 @@ function createTotals(scenarios: ReadonlyArray<ScenarioReport>): ExecutionRunTot
     passedScenarioCount,
     failedScenarioCount,
     quarantinedScenarioCount,
+    skippedScenarioCount,
     stepCount,
     passedStepCount,
     failedStepCount,
@@ -442,7 +446,7 @@ export function createScenarioReport<TContext extends object>(
     acceptance: scenario.acceptance,
     tags: scenario.tags,
     duration: result.duration,
-    status: result.success ? "passed" : "failed",
+    status: result.skipped ? "skipped" : result.success ? "passed" : "failed",
     steps:
       subStepReports.length > 0
         ? subStepReports.flat()
@@ -494,7 +498,7 @@ export function createScenarioReport<TContext extends object>(
           acceptance: subResult.acceptance,
           tags: scenario.tags,
           duration: subResult.duration,
-          status: subResult.success ? "passed" : "failed",
+          status: subResult.skipped ? "skipped" : subResult.success ? "passed" : "failed",
           steps: subStepReports[subIndex] ?? toStepReports(scenario.id, subResult.steps, options),
         };
 

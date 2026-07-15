@@ -178,6 +178,7 @@ export function formatExecutionRunReportAsHtml(report: ExecutionRunReport): stri
     .scenario h3 { margin: 0 0 0.5rem; }
     .scenario-failed h3 { color: #b00020; }
     .scenario-passed h3 { color: #1b5e20; }
+    .scenario-skipped h3 { color: #9e9e9e; }
     .sub-scenarios { margin-top: 0.75rem; }
     .sub-scenarios > h4 { margin: 0 0 0.5rem; font-size: 0.95rem; color: #444; }
     .sub-scenario { background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
