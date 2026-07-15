@@ -93,6 +93,20 @@ Scenario: Invalid password
     ]);
   });
 
+  it("splits prose lines chaining several steps with inline keywords (`, THEN ...`)", () => {
+    const markdown =
+      "GIVEN a registered user exists, WHEN they submit valid credentials ,THEN a token is returned";
+
+    const scenarios = createScenariosFromAcceptanceCriteria(markdown, { stepDefinitions });
+
+    expect(scenarios).toHaveLength(1);
+    expect(scenarios[0]?.steps.map((step) => [step.type, step.name])).toEqual([
+      ["given", "a registered user exists"],
+      ["when", "they submit valid credentials"],
+      ["then", "a token is returned"],
+    ]);
+  });
+
   it("names hidden non-ASCII characters in the undefined-step error", () => {
     const html = `<ul><li>Given items are in the${String.fromCharCode(0xa0)}cart</li></ul>`;
 

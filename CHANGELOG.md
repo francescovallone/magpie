@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-07-15
+
+### Fixed
+
+- Prose lines chaining several steps inline (`GIVEN a user exists, WHEN they log in ,THEN a token is returned`) are now split into individual steps at each `, ; .` boundary followed by a `Given`/`When`/`Then` keyword. `And`/`But` never split mid-line — they are too common as ordinary prose words.
+
 ## [0.3.4] - 2026-07-15
 
 ### Fixed

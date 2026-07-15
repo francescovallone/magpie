@@ -158,6 +158,17 @@ interface ScenarioBlockDraft {
 }
 
 /**
+ * Prose-style criteria chain several steps on one line: `GIVEN a user
+ * exists, WHEN they log in ,THEN a token is returned`. Each punctuation
+ * boundary followed by a `Given`/`When`/`Then` keyword starts a new step
+ * line. `And`/`But` are deliberately not split on — they are far too common
+ * as ordinary prose words after a comma.
+ * ponytail: splits inside quoted step arguments too (`"stop, then go"`);
+ * add a quote-aware scanner if that ever bites.
+ */
+const INLINE_STEP_BOUNDARY = /[,;.]\s*(?=(?:given|when|then)\b)/i;
+
+/**
  * Splits normalized acceptance-criteria text into scenario blocks: an
  * explicit `Scenario: <title>` line starts a new block, and (absent one) a
  * repeated `Given` also starts a new block — the same "more than one Given
@@ -168,7 +179,9 @@ function splitIntoScenarioBlocks(text: string): ReadonlyArray<ParsedScenarioBloc
   const blocks: Array<ScenarioBlockDraft> = [];
   let current: ScenarioBlockDraft | undefined;
 
-  for (const rawLine of text.split("\n")) {
+  const lines = text.split("\n").flatMap((rawLine) => rawLine.split(INLINE_STEP_BOUNDARY));
+
+  for (const rawLine of lines) {
     const line = rawLine.trim();
 
     if (!line) {
