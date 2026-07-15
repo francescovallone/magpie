@@ -47,6 +47,8 @@ Scenario: Invalid password
       "<li>When the customer’s order is placed</li>",
       "<li>Then the receipt says “paid”</li>",
       "<li>And the buyer&#8217;s email is sent</li>",
+      // zero-width space inside "confirmation", en dash in "e-mail"
+      `<li>And the confir${String.fromCharCode(0x200b)}mation e${String.fromCharCode(0x2013)}mail is queued</li>`,
       "</ul>",
     ].join("");
 
@@ -56,6 +58,7 @@ Scenario: Invalid password
         defineGherkinStep({ expression: "the customer's order is placed", execute: () => {} }),
         defineGherkinStep({ expression: "the receipt says {string}", execute: () => {} }),
         defineGherkinStep({ expression: "the buyer's email is sent", execute: () => {} }),
+        defineGherkinStep({ expression: "the confirmation e-mail is queued", execute: () => {} }),
       ],
     });
 
@@ -65,7 +68,49 @@ Scenario: Invalid password
       "the customer's order is placed",
       'the receipt says "paid"',
       "the buyer's email is sent",
+      "the confirmation e-mail is queued",
     ]);
+  });
+
+  it("strips prose punctuation around step texts", () => {
+    // Keyword followed by a comma, leading comma after the keyword, and
+    // trailing sentence punctuation — all common in prose-style criteria.
+    const markdown = `
+- Given , a registered user exists,
+- When, they submit valid credentials.
+- Then a token is returned!
+- And an error is shown:
+`;
+
+    const scenarios = createScenariosFromAcceptanceCriteria(markdown, { stepDefinitions });
+
+    expect(scenarios).toHaveLength(1);
+    expect(scenarios[0]?.steps.map((step) => step.name)).toEqual([
+      "a registered user exists",
+      "they submit valid credentials",
+      "a token is returned",
+      "an error is shown",
+    ]);
+  });
+
+  it("names hidden non-ASCII characters in the undefined-step error", () => {
+    const html = `<ul><li>Given items are in the${String.fromCharCode(0xa0)}cart</li></ul>`;
+
+    expect(() =>
+      createGherkinScenarios(
+        `Feature: F\n\n  Scenario: S\n    Given items are in the${String.fromCharCode(0xa0)}cart\n`,
+        { stepDefinitions: [] },
+      ),
+    ).toThrowError(/U\+00A0/);
+
+    // ...while the acceptance-criteria path normalizes it away entirely.
+    expect(() =>
+      createScenariosFromAcceptanceCriteria(html, {
+        stepDefinitions: [
+          defineGherkinStep({ expression: "items are in the cart", execute: () => {} }),
+        ],
+      }),
+    ).not.toThrow();
   });
 
   it("parses equivalent HTML acceptance criteria identically to Markdown", () => {

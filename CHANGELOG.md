@@ -5,11 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-07-15
+
+### Fixed
+
+- The acceptance-criteria parser no longer leaks prose punctuation into step texts: a comma directly after the keyword (`Given, ...`) and leading/trailing punctuation around the step text (`, . ; : ! ?`) are stripped before step matching. Trailing quotes are intentionally kept, as they can close a `{string}` argument.
+
 ## [0.3.3] - 2026-07-15
 
 ### Fixed
 
-- `createScenariosFromAcceptanceCriteria` no longer reports every step as undefined when the content carries rich-text typography: non-breaking spaces (U+00A0/U+2007/U+202F), curly quotes/apostrophes, and numeric HTML entities (`&#8217;`) are now normalized to their plain equivalents before step matching.
+- `createScenariosFromAcceptanceCriteria` no longer reports every step as undefined when the content carries rich-text typography: zero-width/format characters (U+00AD, U+200B–U+200D, U+2060, U+FEFF) are stripped, and the Unicode space family, curly quotes/apostrophes, typographic dashes, the ellipsis, and numeric HTML entities (`&#8217;`) are normalized to their plain ASCII equivalents before step matching.
+- The "no matching step definition" error now names any non-ASCII code points in each unmatched step (e.g. `U+00A0`), so invisible-character mismatches are diagnosable from the error message alone.
 
 ## [0.3.2] - 2026-07-15
 

@@ -74,17 +74,22 @@ function decodeHtmlEntities(text: string): string {
  * Rich-text editors (Azure DevOps included) silently replace typed
  * characters: straight quotes become curly, spaces become non-breaking.
  * Both are invisible in an "undefined step" listing yet break Cucumber
- * expression matching, so they are normalized back before parsing.
- *
- * The first character class is not blank: it contains the literal characters
- * U+00A0 (no-break space), U+2007 (figure space), and U+202F (narrow
- * no-break space).
+ * expression matching, so they are normalized back before parsing:
+ * zero-width/format characters (U+00AD, U+200B-U+200D, U+2060, U+FEFF)
+ * are stripped; the Unicode space family (U+00A0, U+1680, U+2000-U+200A,
+ * U+202F, U+205F, U+3000), curly quotes/primes, typographic dashes
+ * (U+2010-U+2015, U+2212), and the ellipsis are mapped to plain ASCII.
+ * The character classes below contain those literal (mostly invisible)
+ * characters.
  */
 function normalizeTypography(text: string): string {
   return text
-    .replace(/[   ]/g, " ")
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201c\u201d]/g, '"');
+    .replace(/[­​‌‍⁠﻿]/g, "")
+    .replace(/[   -   　]/g, " ")
+    .replace(/[‘’‚′]/g, "'")
+    .replace(/[“”„″]/g, '"')
+    .replace(/[‐-―−]/g, "-")
+    .replace(/…/g, "...");
 }
 
 /**
@@ -138,7 +143,7 @@ export function normalizeAcceptanceCriteriaContent(
   return collapseBlankLines(normalizeTypography(plainText));
 }
 
-const STEP_LINE_PATTERN = /^-?\s*(Given|When|Then|And|But)\b[:\s]+(.*)$/i;
+const STEP_LINE_PATTERN = /^-?\s*(Given|When|Then|And|But)\b[:,\s]+(.*)$/i;
 const SCENARIO_TITLE_PATTERN = /^-?\s*(?:\*\*)?Scenario:?\s*(.*?)(?:\*\*)?$/i;
 
 interface ParsedScenarioBlock {
@@ -206,7 +211,13 @@ function toGherkinStepLine(line: string): string {
   const match = line.match(STEP_LINE_PATTERN)!;
   const keyword = match[1]!;
   const titleCaseKeyword = keyword[0]!.toUpperCase() + keyword.slice(1).toLowerCase();
-  return `    ${titleCaseKeyword} ${match[2]!.trim()}`;
+  // Prose punctuation around the step text ("Given , the cart ..." / "... is
+  // charged.") is not part of the step and would break expression matching.
+  const text = match[2]!
+    .trim()
+    .replace(/^[,.;:!?\s]+/, "")
+    .replace(/[,.;:!?\s]+$/, "");
+  return `    ${titleCaseKeyword} ${text}`;
 }
 
 function toGherkinFeatureText(

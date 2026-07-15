@@ -667,7 +667,18 @@ function assertAllStepsDefined<TContext extends object>(
     return;
   }
 
-  const listing = undefinedTexts.map((text) => `  - ${text}`).join("\n");
+  const listing = undefinedTexts
+    .map((text) => {
+      const hidden = [...new Set([...text].filter((char) => char.codePointAt(0)! > 126))].map(
+        (char) => `U+${char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`,
+      );
+      const hint = hidden.length
+        ? `\n    (contains non-ASCII characters that may not match your expression: ${hidden.join(" ")})`
+        : "";
+
+      return `  - ${text}${hint}`;
+    })
+    .join("\n");
   const snippets = undefinedTexts.map((text) => generateGherkinStepSnippet(text)).join("\n\n");
 
   throw new Error(
